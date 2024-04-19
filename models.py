@@ -2,14 +2,26 @@ import numpy as np
 import warnings
 
 
-class Models:
+class SupervisedModels:
 
-    def __init__(self, X=None, y=None):
-        """
-        :param X (np.array): The attribute (feature) vector
-        :param y (np.array): The label (response) vector
-        """
+    def __init__(self):
 
+        self.X = None
+        self.y = None
+        self._X_shape = None
+        self._y_shape = None
+
+    def _describe(self):
+        self._X_mean = np.mean(self.X, axis=0)
+        self._X_var = np.var(self.X, axis=0, ddof=1)
+        self._X_std = np.std(self.X, axis=0, ddof=1)
+        self._X_shape = self.X.shape
+        self._y_shape = self.y.shape
+        self._y_mean = np.mean(self.y)
+        self._y_var = np.var(self.y, ddof=1)
+        self._y_std = np.std(self.y, ddof=1)
+
+    def _preprocess(self, X, y):
         try:
             X = np.array(X)
             y = np.array(y)
@@ -17,18 +29,9 @@ class Models:
                 y = y[:, np.newaxis]
         except Exception:
             raise TypeError("X or y is not or cannot be converted into a np.ndarray.")
-
         self.X = X
         self.y = y
-        self._X_shape = X.shape
-        self._y_shape = y.shape
         self._describe()
-
-    def _describe(self):
-        # TODO: describe X
-        self._y_mean = np.mean(self.y)
-        self._y_var = np.var(self.y, ddof=1)
-        self._y_std = np.std(self.y, ddof=1)
 
     @property
     def X_shape_(self):
@@ -38,15 +41,16 @@ class Models:
     def y_shape_(self):
         return self._y_shape
 
-    def fit(self):
+    def fit(self, X, y):
         raise Exception("This is an empty model.")
 
 
-class PredictionModels(Models):
+class PredictionModels(SupervisedModels):
 
-    def __init__(self, X=None, y=None):
-        super().__init__(X, y)
-        self._SST = np.sum((y - self._y_mean) ** 2)
+    def __init__(self, fill_one=False):
+        super().__init__()
+        self.fill_one = fill_one
+        self._SST = None
         self._SSR = None
         self._SSE = None
         self.R_squared = None
@@ -66,10 +70,19 @@ class PredictionModels(Models):
     def SSR_(self):
         return self._SSR
 
+    def _preprocess(self, X, y):
+        super()._preprocess(X, y)
+        if self.fill_one:
+            self._X = np.hstack((np.ones((self._X_shape[0], 1)), self.X))
+            self._X_shape = self._X.shape
+        else:
+            self._X = self.X
+        self._SST = np.sum((y - self._y_mean) ** 2)
+
 
 class LinearRegression(PredictionModels):
 
-    def __init__(self, X, y, fill_one=True, penalty='l2', C=0, max_iter=100, tol=1e-5):
+    def __init__(self, fill_one=True, penalty='l2', C=0, max_iter=100, tol=1e-5):
         """
         Initialize the linear regression model with given parameters.
 
@@ -91,8 +104,6 @@ class LinearRegression(PredictionModels):
         To fit a multiple linear regression model without regularization, please use 'l2'
         penalty and set `C = 0`.
 
-        :param X: The attribute (feature) vector
-        :param y: The label (response) vector
         :param fill_one: Whether constants should be added to X
         :param penalty: The type of regularization
         :param C: Coefficient of regularization
@@ -100,16 +111,7 @@ class LinearRegression(PredictionModels):
         :param tol: Tolerance for convergence criteria
         """
 
-        super().__init__(X, y)
-
-        if fill_one:
-            self._X = np.hstack((np.ones((self._X_shape[0], 1)), self.X))
-            self._X_shape = self._X.shape
-        else:
-            self._X = self.X
-        self._X_T = self._X.T
-        self._X_T_X = self._X_T @ self._X
-        self._X_T_y = self._X_T @ self.y
+        super().__init__(fill_one=fill_one)
 
         if penalty == "l1":
             self.penalty = 1
@@ -123,7 +125,8 @@ class LinearRegression(PredictionModels):
         self.max_iter = max_iter
         self.tol = tol
 
-    def fit(self):
+    def fit(self, X, y):
+        self._preprocess(X, y)
 
         if self.penalty == 2:
             self._coef = np.linalg.inv(self._X_T_X + self.C * np.eye(self._X_shape[1])) @ self._X_T_y
@@ -157,6 +160,12 @@ class LinearRegression(PredictionModels):
         self._y_predict = X_test @ self._coef
         return self._y_predict
 
+    def _preprocess(self, X, y):
+        super()._preprocess(X, y)
+        self._X_T = self._X.T
+        self._X_T_X = self._X_T @ self._X
+        self._X_T_y = self._X_T @ self.y
+
     def _best_coef_k(self, k):
         return self._sub_gradient(self._X_T_y[k][0] - self._X_T_X[k] @ self._coef +
                                   self._X_T_X[k][k] * self._coef[k], k)
@@ -181,17 +190,14 @@ class LinearRegression(PredictionModels):
             return self._coef[index]
 
 
-class ClassificationModels(Models):
+class ClassificationModels(SupervisedModels):
 
-    def __init__(self, X=None, y=None, pre_process=False):
-        super().__init__(X, y)
+    def __init__(self, pre_process=False, fill_one=False):
+        super().__init__()
         self._y = None
-
-        if pre_process:
-            self._class_num = self._preprocess_y()
-        else:
-            self._y = self.y
-            self._class_num = len(np.unique(self._y))
+        self.pre_process = pre_process
+        self.fill_one = fill_one
+        self._class_num = None
 
     def _preprocess_y(self):
         y_dict = dict()
@@ -207,10 +213,19 @@ class ClassificationModels(Models):
     def class_num_(self):
         return self._class_num
 
+    def _preprocess(self, X, y):
+        super()._preprocess(X, y)
+
+        if self.fill_one:
+            self._X = np.hstack((np.ones((self._X_shape[0], 1)), self.X))
+            self._X_shape = self._X.shape
+        else:
+            self._X = self.X
+
     
 class LogisticRegression(ClassificationModels):
 
-    def __init__(self, X, y, fill_one=True, pre_process=False, lr=0.04, penalty='l2', C=0, max_iter=10000, tol=1e-5,
+    def __init__(self, fill_one=True, pre_process=False, lr=0.04, penalty='l2', C=0, max_iter=10000, tol=1e-5,
                  batch='all'):
         """
         Initialize the linear regression model with given parameters.
@@ -221,8 +236,6 @@ class LogisticRegression(ClassificationModels):
 
         The optimization is done by gradient descent.
 
-        :param X: The attribute (feature) vector
-        :param y: The label (response) vector
         :param fill_one: Whether constants should be added to X
         :param pre_process: Whether to preprocess vector y
         :param lr: The learning rate for gradient descent
@@ -232,13 +245,7 @@ class LogisticRegression(ClassificationModels):
         :param tol: Tolerance for convergence criteria
         :param batch: The batch size for gradient descent
         """
-        super().__init__(X, y, pre_process=pre_process)
-
-        if fill_one:
-            self._X = np.hstack((np.ones((self._X_shape[0], 1)), self.X))
-            self._X_shape = self._X.shape
-        else:
-            self._X = self.X
+        super().__init__(pre_process=pre_process, fill_one=fill_one)
 
         if penalty == 'l2':
             self.penalty = 2
@@ -251,31 +258,40 @@ class LogisticRegression(ClassificationModels):
         self.C = C
         self.max_iter = max_iter
         self.lr = lr
+        self.batch = batch
+        self.tol = tol
+
+    def fit(self, X, y):
+        self._preprocess(X, y)
+        if self._class_num == 2:
+            self._binary_solver()
+        else:
+            self._multiclass_solver()
+
+    def _preprocess(self, X, y):
+        super()._preprocess(X, y)
+
+        if self.pre_process:
+            self._y = np.zeros_like(self.y)
+            self._class_num = self._preprocess_y()
+        else:
+            self._y = self.y
+            self._class_num = len(np.unique(self._y))
 
         if self._class_num == 1:
             raise Exception('There is only one group of y')
         elif self._class_num == 2:
             self._coef = np.zeros(self._X_shape[1])
-            self._type = 'Binary model'
         else:
             self._coef = np.zeros((self._class_num - 1, self._X_shape[1]))
-            self._type = 'Multiclass model'
 
-        if batch == 'all' or batch >= self._X_shape[0]:
-            self.batch = self._X_shape[0]
-        elif batch < 1:
-            self.batch = 1
+        if self.batch == 'all' or self.batch >= self._X_shape[0]:
+            self._batch = self._X_shape[0]
+        elif self.batch < 1:
+            self._batch = 1
             warnings.warn('Batch must be a positive number and is automatically set to 1')
         else:
-            self.batch = int(batch)
-
-        self.tol = tol
-
-    def fit(self):
-        if self._class_num == 2:
-            self._binary_solver()
-        else:
-            self._multiclass_solver()
+            self._batch = int(self.batch)
 
     def _binary_solver(self):
         for _ in range(self.max_iter):
@@ -285,7 +301,7 @@ class LogisticRegression(ClassificationModels):
                 break
 
     def _binary_gradient_descent(self):
-        index_list = np.random.choice(np.arange(self._X_shape[0]), self.batch, replace=False)
+        index_list = np.random.choice(np.arange(self._X_shape[0]), self._batch, replace=False)
         self._coef += self.lr * (sum(
             self._X[i] * (self._y[i][0] - self._sigmoid(np.dot(self._X[i], self._coef)))
             for i in index_list
@@ -323,13 +339,6 @@ class LogisticRegression(ClassificationModels):
     def coef_(self):
         return self._coef
 
-    @property
-    def type_(self):
-        """
-        :return: The type of the logistic regression model, i.e., binary model or multiclass model
-        """
-        return self._type
-
     @staticmethod
     def _sigmoid(x):
         return 1 / (1 + np.e ** -x)
@@ -337,7 +346,7 @@ class LogisticRegression(ClassificationModels):
 
 class SVM(ClassificationModels):
 
-    def __init__(self, X, y, pre_process=True, margin='soft', C=1, eps=1e-3):
+    def __init__(self, pre_process=True, margin='soft', C=1, eps=1e-3):
         """
         Initialize the SVM model with given parameters.
 
@@ -350,24 +359,13 @@ class SVM(ClassificationModels):
         Note2: The heuristic function has not been actually utilized and may be employed in future version
         to enhance efficiency.
 
-        :param X: The attribute (feature) vector
-        :param y: The label (response) vector
         :param pre_process: Whether to preprocess vector y
         :param margin: The type of margin of SVM model (hard or soft)
         :param C: Coefficient for soft-margin
         :param eps: Tolerance for convergence criteria
         """
-        super().__init__(X, y)
-
-        if self._class_num == 1:
-            raise Exception('There is only one group of y')
-        elif self._class_num == 2:
-            self._coef = np.zeros(self._X_shape[1])
-            self._intercept = 0
-            if pre_process:
-                self._preprocess_y()
-        else:
-            raise NotImplementedError("SVM doesn't support multiple classes of y.")
+        super().__init__()
+        self.pre_process = pre_process
 
         if margin == 'hard':
             self._margin = 0
@@ -377,13 +375,9 @@ class SVM(ClassificationModels):
         else:
             raise Exception(f"Unexpected margin type: {margin}")
 
-        self._X_dot = np.zeros((self._X_shape[0], self._X_shape[0]))
         self.C = C
         self.eps = eps
         self._b = 0
-        self._d = np.zeros(self._X_shape[0])
-        self._E = np.zeros(self._X_shape[0])
-        self._alpha = np.zeros(self._X_shape[0])
 
     def _preprocess_y(self):
         y_dict = dict()
@@ -394,6 +388,12 @@ class SVM(ClassificationModels):
                     y[0] = -1
             return
 
+        if any(self._y == [-1]):
+            for y in self._y:
+                if y[0] != -1:
+                    y[0] = 1
+            return
+
         for i, y in enumerate(self._y):
             if y[0] not in y_dict:
                 if len(y_dict) == 0:
@@ -402,18 +402,44 @@ class SVM(ClassificationModels):
                     y_dict[y[0]] = 1
             self._y[i][0] = y_dict[y[0]]
 
-    def fit(self):
+    def fit(self, X, y):
+        self._preprocess(X, y)
+
+        if self._margin == 0:
+            self._hard_smo_solver()
+        elif self._margin == 1:
+            self._soft_smo_solver()
+
+    def _preprocess(self, X, y):
+        super()._preprocess(X, y)
+
+        if self.pre_process:
+            self._y = np.zeros_like(self.y)
+            self._preprocess_y()
+            self._class_num = 2
+        else:
+            self._y = self.y
+            self._class_num = len(np.unique(self._y))
+
+        if self._class_num == 1:
+            raise Exception('There is only one group of y')
+        elif self._class_num == 2:
+            self._coef = np.zeros(self._X_shape[1])
+            self._intercept = 0
+        else:
+            raise NotImplementedError("SVM doesn't support multiple classes of y.")
+
+        self._X_dot = np.zeros((self._X_shape[0], self._X_shape[0]))
+        self._d = np.zeros(self._X_shape[0])
+        self._E = np.zeros(self._X_shape[0])
+        self._alpha = np.zeros(self._X_shape[0])
+
         for i in range(self._X_shape[0]):
             for j in range(self._X_shape[0]):
                 self._X_dot[i][j] = np.dot(self.X[i], self.X[j])
 
         for i in range(self._X_shape[0]):
             self._E[i] = -self._y[i][0]
-
-        if self._margin == 0:
-            self._hard_smo_solver()
-        elif self._margin == 1:
-            self._soft_smo_solver()
 
     def _hard_smo_solver(self):
         # TODO
@@ -601,3 +627,37 @@ class SVM(ClassificationModels):
     @property
     def intercept_(self):
         return self._intercept
+
+
+class Perceptron(ClassificationModels):
+
+    def __init__(self, pre_process=False, lr=0.01):
+        super().__init__(pre_process=pre_process, fill_one=False)
+        self.lr = lr
+
+    def fit(self, X, y):
+        self._preprocess(X, y)
+
+    def _preprocess(self, X, y):
+        super()._preprocess(X, y)
+
+        if self.pre_process:
+            self._y = np.zeros_like(self.y)
+            self._class_num = self._preprocess_y()
+        else:
+            self._y = self.y
+            self._class_num = len(np.unique(self._y))
+
+        if self._class_num == 1:
+            warnings.warn('There is only one group of y')
+        elif self._class_num == 2:
+            self._coef = np.zeros(self._X_shape[1])
+            self._intercept = 0
+        else:
+            raise NotImplementedError("Perceptron doesn't support multiple classes of y.")
+
+
+class NeuralNetwork(SupervisedModels):
+
+    def __init__(self):
+        super().__init__()
