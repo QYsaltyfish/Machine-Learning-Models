@@ -8,4 +8,6 @@ Contains:
 
 3. SVM (hard-margin and soft-margin)
 
-4. TODO: Neural network
+4. Neural network
+
+5. TODO: Feature engineering
