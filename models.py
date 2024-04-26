@@ -25,8 +25,6 @@ class SupervisedModels:
         try:
             X = np.array(X)
             y = np.array(y)
-            if y.ndim == 1:
-                y = y[:, np.newaxis]
         except Exception:
             raise TypeError("X or y is not or cannot be converted into a np.ndarray.")
         self.X = X
@@ -202,11 +200,11 @@ class ClassificationModels(SupervisedModels):
     def _preprocess_y(self):
         y_dict = dict()
         for i, y in enumerate(self.y):
-            if y[0] not in y_dict:
-                self._y[i][0] = len(y_dict)
-                y_dict[y[0]] = len(y_dict)
+            if y not in y_dict:
+                self._y[i] = len(y_dict)
+                y_dict[y] = len(y_dict)
             else:
-                self._y[i][0] = y_dict[y[0]]
+                self._y[i] = y_dict[y]
         return len(y_dict)
     
     @property
@@ -303,7 +301,7 @@ class LogisticRegression(ClassificationModels):
     def _binary_gradient_descent(self):
         index_list = np.random.choice(np.arange(self._X_shape[0]), self._batch, replace=False)
         self._coef += self.lr * (sum(
-            self._X[i] * (self._y[i][0] - self._sigmoid(np.dot(self._X[i], self._coef)))
+            self._X[i] * (self._y[i] - self._sigmoid(np.dot(self._X[i], self._coef)))
             for i in index_list
         ) - self.C * self._coef)
 
@@ -341,7 +339,7 @@ class LogisticRegression(ClassificationModels):
 
     @staticmethod
     def _sigmoid(x):
-        return 1 / (1 + np.e ** -x)
+        return 1 / (1 + np.exp(-x))
 
 
 class SVM(ClassificationModels):
@@ -382,25 +380,25 @@ class SVM(ClassificationModels):
     def _preprocess_y(self):
         y_dict = dict()
 
-        if any(self._y == [0]):
-            for y in self._y:
-                if y[0] == 0:
-                    y[0] = -1
+        if any(self._y == 0):
+            for i, y in enumerate(self._y):
+                if y == 0:
+                    self._y[i] = -1
             return
 
-        if any(self._y == [-1]):
-            for y in self._y:
-                if y[0] != -1:
-                    y[0] = 1
+        if any(self._y == -1):
+            for i, y in enumerate(self._y):
+                if y != -1:
+                    self._y[i] = 1
             return
 
         for i, y in enumerate(self._y):
-            if y[0] not in y_dict:
+            if y not in y_dict:
                 if len(y_dict) == 0:
-                    y_dict[y[0]] = -1
+                    y_dict[y] = -1
                 else:
-                    y_dict[y[0]] = 1
-            self._y[i][0] = y_dict[y[0]]
+                    y_dict[y] = 1
+            self._y[i] = y_dict[y]
 
     def fit(self, X, y):
         self._preprocess(X, y)
@@ -439,7 +437,7 @@ class SVM(ClassificationModels):
                 self._X_dot[i][j] = np.dot(self.X[i], self.X[j])
 
         for i in range(self._X_shape[0]):
-            self._E[i] = -self._y[i][0]
+            self._E[i] = -self._y[i]
 
     def _hard_smo_solver(self):
         # TODO
@@ -460,7 +458,7 @@ class SVM(ClassificationModels):
                 else:
                     continue
                 new_alpha2, L, H = self._clip_alpha2(i, j, self._get_unclipped_alpha2(i, j))
-                new_alpha1 = self._alpha[i] + self._y[i][0] * self._y[j][0] * (self._alpha[j] - new_alpha2)
+                new_alpha1 = self._alpha[i] + self._y[i] * self._y[j] * (self._alpha[j] - new_alpha2)
                 new_b = self._get_new_b(i, j, new_alpha1, new_alpha2, L, H)
                 self.update_E(i, j, new_alpha1, new_alpha2, new_b)
                 self._b = new_b
@@ -491,7 +489,7 @@ class SVM(ClassificationModels):
                     else:
                         continue
                     new_alpha2, L, H = self._clip_alpha2(i, j, self._get_unclipped_alpha2(i, j))
-                    new_alpha1 = self._alpha[i] + self._y[i][0] * self._y[j][0] * (self._alpha[j] - new_alpha2)
+                    new_alpha1 = self._alpha[i] + self._y[i] * self._y[j] * (self._alpha[j] - new_alpha2)
                     new_b = self._get_new_b(i, j, new_alpha1, new_alpha2, L, H)
                     self.update_E(i, j, new_alpha1, new_alpha2, new_b)
                     self._b = new_b
@@ -504,8 +502,8 @@ class SVM(ClassificationModels):
             if not find_violator:
                 break
 
-        self._coef = sum((self._alpha[i] * self._y[i][0] * self.X[i] for i in range(self._X_shape[0])))
-        b_star = [self._y[j][0] -
+        self._coef = sum((self._alpha[i] * self._y[i] * self.X[i] for i in range(self._X_shape[0])))
+        b_star = [self._y[j] -
                   sum(self._alpha[i] * self._y[i] * self._X_dot[i][j]
                       for i in range(self._X_shape[0]) if self._alpha[i] != 0)
                   for j in range(self._X_shape[0]) if 0 < self._alpha[j] < self.C]
@@ -522,9 +520,9 @@ class SVM(ClassificationModels):
         :param i: The index of the coefficient to check KKT condition.
         :return: Whether the coefficient **violates** epsiolon-KKT condition.
         """
-        return (self._alpha[i] < self.C and self._y[i][0] * self._E[i] < -self.eps
+        return (self._alpha[i] < self.C and self._y[i] * self._E[i] < -self.eps
                 or
-                self._alpha[i] > 0 and self._y[i][0] * self._E[i] > self.eps)
+                self._alpha[i] > 0 and self._y[i] * self._E[i] > self.eps)
 
     def _find_second_alpha(self, i):
         """
@@ -554,7 +552,7 @@ class SVM(ClassificationModels):
         """
         eta = self._X_dot[i][i] + self._X_dot[j][j] - 2 * self._X_dot[i][j]
         if eta > 0:
-            return self._alpha[j] + self._y[j][0] * (self._E[i] - self._E[j]) / eta
+            return self._alpha[j] + self._y[j] * (self._E[i] - self._E[j]) / eta
         else:
             return None
 
@@ -580,7 +578,7 @@ class SVM(ClassificationModels):
         :param unclipped_alpha2: The unclipped value of alpha_j
         :return: The clipped value of alpha_j
         """
-        if self._y[i][0] == self._y[j][0]:
+        if self._y[i] == self._y[j]:
             H = min(self.C, self._alpha[i] + self._alpha[j])
             L = max(0, self._alpha[i] + self._alpha[j] - self.C)
         else:
@@ -599,16 +597,16 @@ class SVM(ClassificationModels):
         omitted here.
         """
         if 0 < new_alpha1 < self.C:
-            return (-self._E[i] - self._y[i][0] * self._X_dot[i][i] * (new_alpha1 - self._alpha[i]) -
-                    self._y[j][0] * self._X_dot[i][j] * (new_alpha2 - self._alpha[j]) + self._b)
+            return (-self._E[i] - self._y[i] * self._X_dot[i][i] * (new_alpha1 - self._alpha[i]) -
+                    self._y[j] * self._X_dot[i][j] * (new_alpha2 - self._alpha[j]) + self._b)
         if 0 < new_alpha2 < self.C:
-            return (-self._E[j] - self._y[i][0] * self._X_dot[i][j] * (new_alpha1 - self._alpha[i]) -
-                    self._y[j][0] * self._X_dot[j][j] * (new_alpha2 - self._alpha[j]) + self._b)
+            return (-self._E[j] - self._y[i] * self._X_dot[i][j] * (new_alpha1 - self._alpha[i]) -
+                    self._y[j] * self._X_dot[j][j] * (new_alpha2 - self._alpha[j]) + self._b)
         if L != H:
-            b1 = (-self._E[i] - self._y[i][0] * self._X_dot[i][i] * (new_alpha1 - self._alpha[i]) -
-                  self._y[j][0] * self._X_dot[i][j] * (new_alpha2 - self._alpha[j]) + self._b)
-            b2 = (-self._E[j] - self._y[i][0] * self._X_dot[i][j] * (new_alpha1 - self._alpha[i]) -
-                  self._y[j][0] * self._X_dot[j][j] * (new_alpha2 - self._alpha[j]) + self._b)
+            b1 = (-self._E[i] - self._y[i] * self._X_dot[i][i] * (new_alpha1 - self._alpha[i]) -
+                  self._y[j] * self._X_dot[i][j] * (new_alpha2 - self._alpha[j]) + self._b)
+            b2 = (-self._E[j] - self._y[i] * self._X_dot[i][j] * (new_alpha1 - self._alpha[i]) -
+                  self._y[j] * self._X_dot[j][j] * (new_alpha2 - self._alpha[j]) + self._b)
             return 0.5 * (b1 + b2)
         return self._b
 
@@ -616,8 +614,8 @@ class SVM(ClassificationModels):
         delta_b = new_b - self._b
         for k, old_E in enumerate(self._E):
             self._E[k] = (old_E +
-                          self._y[i][0] * self._X_dot[i][k] * (new_alpha1 - self._alpha[i]) +
-                          self._y[j][0] * self._X_dot[j][k] * (new_alpha2 - self._alpha[j]) +
+                          self._y[i] * self._X_dot[i][k] * (new_alpha1 - self._alpha[i]) +
+                          self._y[j] * self._X_dot[j][k] * (new_alpha2 - self._alpha[j]) +
                           delta_b)
 
     @property
@@ -638,6 +636,15 @@ class Perceptron(ClassificationModels):
     def fit(self, X, y):
         self._preprocess(X, y)
 
+        for x, y in zip(self._X, self._y):
+            y_pred = self._get_y_pred(x)
+
+            if y == y_pred:
+                continue
+
+            self._coef += self.lr * (y - y_pred) * x
+            self._intercept += self.lr * (y - y_pred)
+
     def _preprocess(self, X, y):
         super()._preprocess(X, y)
 
@@ -656,8 +663,165 @@ class Perceptron(ClassificationModels):
         else:
             raise NotImplementedError("Perceptron doesn't support multiple classes of y.")
 
+    def _get_y_pred(self, x):
+        if self._coef @ x + self._intercept >= 0:
+            return 1
+        else:
+            return 0
+
+    @property
+    def coef_(self):
+        return self._coef
+
+    @property
+    def intercept_(self):
+        return self._intercept
+
 
 class NeuralNetwork(SupervisedModels):
 
-    def __init__(self):
+    class Node:
+
+        def __init__(self, activation_function=None, **kwargs):
+            if activation_function == 'constant':
+                self.f = self._constant
+                self.df = self._d_constant
+                self._name = 'constant'
+            elif activation_function == 'linear':
+                self.f = self._linear()
+                self.df = self._d_linear()
+                self.k = kwargs.get('k', 1)
+                self._name = f'k={self.k} linear'
+            elif activation_function == 'sigmoid':
+                self.f = self._sigmoid
+                self.df = self._d_sigmoid
+                self._name = 'sigmoid'
+
+            self.s_lcomb = None
+            self.s_act = None
+
+        def __repr__(self):
+            return f'{self._name} node'
+
+        def _sigmoid(self):
+            self.s_act = 1 / (1 + np.exp(-self.s_lcomb))
+            return self.s_act
+
+        def _d_sigmoid(self):
+            return self.s_act * (1 - self.s_act)
+
+        def _linear(self):
+            self.s_act = self.s_lcomb * self.k
+            return self.s_act
+
+        def _d_linear(self):
+            return self.k
+
+        def _constant(self):
+            self.s_act = 1
+            return 1
+
+        def _d_constant(self):
+            return 0
+
+    def __init__(self, lr=0.01, max_iter=1):
         super().__init__()
+
+        self.layers: list[list[NeuralNetwork.Node]] = [[], []]
+        self.weights = None
+        self.lr = lr
+        self.df = np.vectorize(lambda x: x.df())
+        self.max_iter = max_iter
+
+    def set_input_layer(self, input_length, add_constant=False):
+        self.layers[0] = [self.Node() for _ in range(input_length)]
+
+        if add_constant:
+            self.layers[0].append(self.Node('constant'))
+            raise NotImplementedError("Adding constant hasn't been implemented yet.")
+
+    def set_output_layer(self, output_length, activation_function=None):
+        if activation_function is None:
+            raise Exception('An activation function must be specified.')
+
+        if output_length > 1:
+            raise NotImplementedError("Output Length > 1 hasn't been implemented yet.")
+
+        self.layers[-1] = [self.Node(activation_function=activation_function)]
+
+    def add_hidden_layer(self, index=-1, hidden_length=0, activation_function=None, add_constant=False):
+        if activation_function is None:
+            warnings.warn("No activation function is specified.")
+
+        if hidden_length == 0:
+            raise Exception("Hidden length must be a positive integer.")
+
+        self.layers.insert(index, [self.Node(activation_function=activation_function) for _ in range(hidden_length)])
+
+        if add_constant:
+            raise NotImplementedError("Adding constant hasn't been implemented yet.")
+
+    def _generate_zero_weights(self):
+        self.weights = [np.zeros((len(self.layers[i]), len(self.layers[i + 1]))) for i in range(len(self.layers) - 1)]
+
+    def _generate_random_weights(self):
+        self.weights = [np.random.random((len(self.layers[i]), len(self.layers[i + 1])))
+                        for i in range(len(self.layers) - 1)]
+
+    def _forward_propagate(self, x):
+        curr_layer = x  # curr_layer is a reference of x
+
+        first_layer = self.layers[0]
+        for i, x_i in enumerate(x):
+            first_layer[i].s_lcomb = first_layer[i].s_act = x_i
+
+        for i in range(len(self.layers) - 1):
+            curr_layer = curr_layer @ self.weights[i]
+            for j, node in enumerate(self.layers[i + 1]):
+                node.s_lcomb = curr_layer[j]
+                curr_layer[j] = node.f()
+
+    def _backward_propagate(self, y_real):
+        delta_weights = [None for _ in range(len(self.weights))]
+
+        # The last layer is special
+        grad = np.array([(node.s_act - y_real[i]) * node.df() for i, node in enumerate(self.layers[-1])])
+
+        if all(grad) == 0:
+            return
+
+        last_act = np.array([node.s_act for node in self.layers[-2]])
+        delta_weights[-1] = np.outer(last_act, grad)
+
+        # Process remaining layers
+        for layer_index in range(-2, -len(self.layers), -1):
+            grad = self.weights[layer_index + 1] @ grad
+            grad = self.df(self.layers[layer_index]) * grad
+            last_act = np.array([node.s_act for node in self.layers[layer_index - 1]])
+            delta_weights[layer_index] = np.outer(last_act, grad)
+
+        # Update weights
+        for i, delta_weight in enumerate(delta_weights):
+            self.weights[i] -= delta_weight
+
+    def fit(self, X, y):
+        self._preprocess_y(y)
+
+        if self.weights is None:
+            self._generate_zero_weights()
+        for x, y_real in zip(X, y):
+            self._forward_propagate(x)
+            self._backward_propagate(y_real)
+
+    def predict(self, X):
+        res = np.zeros((len(X), len(self.layers[-1])))
+        for i, x in enumerate(X):
+            self._forward_propagate(x)
+            for j, node in enumerate(self.layers[-1]):
+                res[i][j] = node.s_act
+        return res
+
+    def _preprocess_y(self, y):
+        if y.ndim == 1:
+            return y.T
+        return y
