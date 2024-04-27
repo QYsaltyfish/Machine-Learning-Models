@@ -206,7 +206,7 @@ class ClassificationModels(SupervisedModels):
             else:
                 self._y[i] = y_dict[y]
         return len(y_dict)
-    
+
     @property
     def class_num_(self):
         return self._class_num
@@ -220,7 +220,7 @@ class ClassificationModels(SupervisedModels):
         else:
             self._X = self.X
 
-    
+
 class LogisticRegression(ClassificationModels):
 
     def __init__(self, fill_one=True, pre_process=False, lr=0.04, penalty='l2', C=0, max_iter=10000, tol=1e-5,
@@ -473,7 +473,8 @@ class SVM(ClassificationModels):
             # Find all the non-bound samples
             non_bound_indexs = []
             for i in range(self._X_shape[0]):
-                if 0 < self._alpha[i] < self.C: non_bound_indexs.append(i)
+                if 0 < self._alpha[i] < self.C:
+                    non_bound_indexs.append(i)
 
             # Second traversal, traverse all the non-bound samples and optimize, until all non-bound samples
             # satisfy KKT conditions.
@@ -679,7 +680,6 @@ class Perceptron(ClassificationModels):
 
 
 class NeuralNetwork(SupervisedModels):
-
     class Node:
 
         def __init__(self, activation_function=None, **kwargs):
@@ -688,14 +688,27 @@ class NeuralNetwork(SupervisedModels):
                 self.df = self._d_constant
                 self._name = 'constant'
             elif activation_function == 'linear':
-                self.f = self._linear()
-                self.df = self._d_linear()
+                self.f = self._linear
+                self.df = self._d_linear
                 self.k = kwargs.get('k', 1)
                 self._name = f'k={self.k} linear'
             elif activation_function == 'sigmoid':
                 self.f = self._sigmoid
                 self.df = self._d_sigmoid
                 self._name = 'sigmoid'
+            elif activation_function == 'tanh':
+                self.f = self._tanh
+                self.df = self._d_tanh
+                self._name = 'tanh'
+            elif activation_function == 'relu':
+                self.f = self._relu
+                self.df = self._d_relu
+                self._name = 'relu'
+            elif activation_function == 'prelu':
+                self.f = self._prelu
+                self.df = self._d_relu
+                self.p = kwargs.get('p', 0.01)
+                self._name = 'prelu'
 
             self.s_lcomb = None
             self.s_act = None
@@ -724,7 +737,35 @@ class NeuralNetwork(SupervisedModels):
         def _d_constant(self):
             return 0
 
-    def __init__(self, lr=0.01, max_iter=1):
+        def _tanh(self):
+            self.s_act = np.tanh(self.s_lcomb)
+            return self.s_act
+
+        def _d_tanh(self):
+            return 1 - self.s_act ** 2
+
+        def _relu(self):
+            self.s_act = max(self.s_lcomb, 0)
+            return self.s_act
+
+        def _d_relu(self):
+            if self.s_lcomb >= 0:
+                return 1
+            return 0
+
+        def _prelu(self):
+            if self.s_lcomb >= 0:
+                self.s_act = self.s_lcomb
+            else:
+                self.s_act = self.p * self.s_lcomb
+            return self.s_act
+
+        def _d_prelu(self):
+            if self.s_lcomb >= 0:
+                return 1
+            return self.p
+
+    def __init__(self, lr=0.01, max_iter=1, weight_init='xavier'):
         super().__init__()
 
         self.layers: list[list[NeuralNetwork.Node]] = [[], []]
@@ -732,6 +773,13 @@ class NeuralNetwork(SupervisedModels):
         self.lr = lr
         self.df = np.vectorize(lambda x: x.df())
         self.max_iter = max_iter
+
+        if weight_init == 'xavier':
+            self.weight_init = 1
+        elif weight_init == 'random':
+            self.weight_init = 2
+        else:
+            self.weight_init = 0
 
     def set_input_layer(self, input_length, add_constant=False):
         self.layers[0] = [self.Node() for _ in range(input_length)]
@@ -744,10 +792,7 @@ class NeuralNetwork(SupervisedModels):
         if activation_function is None:
             raise Exception('An activation function must be specified.')
 
-        if output_length > 1:
-            raise NotImplementedError("Output Length > 1 hasn't been implemented yet.")
-
-        self.layers[-1] = [self.Node(activation_function=activation_function)]
+        self.layers[-1] = [self.Node(activation_function=activation_function) for _ in range(output_length)]
 
     def add_hidden_layer(self, index=-1, hidden_length=0, activation_function=None, add_constant=False):
         if activation_function is None:
@@ -761,12 +806,28 @@ class NeuralNetwork(SupervisedModels):
         if add_constant:
             raise NotImplementedError("Adding constant hasn't been implemented yet.")
 
+    def _generate_weights(self):
+        if self.weight_init == 0:
+            self._generate_zero_weights()
+        elif self.weight_init == 1:
+            self._generate_xavier_weights()
+        elif self.weight_init == 2:
+            self._generate_random_weights()
+
     def _generate_zero_weights(self):
         self.weights = [np.zeros((len(self.layers[i]), len(self.layers[i + 1]))) for i in range(len(self.layers) - 1)]
 
     def _generate_random_weights(self):
         self.weights = [np.random.random((len(self.layers[i]), len(self.layers[i + 1])))
                         for i in range(len(self.layers) - 1)]
+
+    def _generate_xavier_weights(self):
+        self.weights = [None for _ in range(len(self.layers) - 1)]
+        for layer_index in range(len(self.layers) - 1):
+            len_in = len(self.layers[layer_index])
+            len_out = len(self.layers[layer_index + 1])
+            bound = np.sqrt(6 / (len_in + len_out))
+            self.weights[layer_index] = np.random.uniform(-bound, bound, size=(len_in, len_out))
 
     def _forward_propagate(self, x):
         curr_layer = x  # curr_layer is a reference of x
@@ -805,13 +866,14 @@ class NeuralNetwork(SupervisedModels):
             self.weights[i] -= delta_weight
 
     def fit(self, X, y):
-        self._preprocess_y(y)
-
+        y = self._preprocess_y(y)
         if self.weights is None:
-            self._generate_zero_weights()
-        for x, y_real in zip(X, y):
-            self._forward_propagate(x)
-            self._backward_propagate(y_real)
+            self._generate_weights()
+
+        for _ in range(self.max_iter):
+            for x, y_real in zip(X, y):
+                self._forward_propagate(x)
+                self._backward_propagate(y_real)
 
     def predict(self, X):
         res = np.zeros((len(X), len(self.layers[-1])))
@@ -823,5 +885,5 @@ class NeuralNetwork(SupervisedModels):
 
     def _preprocess_y(self, y):
         if y.ndim == 1:
-            return y.T
+            return y.reshape(-1, 1)
         return y
