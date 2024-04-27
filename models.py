@@ -57,15 +57,15 @@ class PredictionModels(SupervisedModels):
         self._y_fit = None
 
     @property
-    def SST_(self):
+    def sst_(self):
         return self._SST
 
     @property
-    def SSE_(self):
+    def sse_(self):
         return self._SSE
 
     @property
-    def SSR_(self):
+    def ssr_(self):
         return self._SSR
 
     def _preprocess(self, X, y):
@@ -206,7 +206,7 @@ class ClassificationModels(SupervisedModels):
             else:
                 self._y[i] = y_dict[y]
         return len(y_dict)
-
+    
     @property
     def class_num_(self):
         return self._class_num
@@ -220,7 +220,7 @@ class ClassificationModels(SupervisedModels):
         else:
             self._X = self.X
 
-
+    
 class LogisticRegression(ClassificationModels):
 
     def __init__(self, fill_one=True, pre_process=False, lr=0.04, penalty='l2', C=0, max_iter=10000, tol=1e-5,
@@ -228,7 +228,7 @@ class LogisticRegression(ClassificationModels):
         """
         Initialize the linear regression model with given parameters.
 
-        The objective function for l2 regulariztion is::
+        The objective function for l2 regularization is::
 
             l(w) + C / 2 * ||w||_2^2
 
@@ -256,7 +256,8 @@ class LogisticRegression(ClassificationModels):
         self.C = C
         self.max_iter = max_iter
         self.lr = lr
-        self.batch = batch
+        if batch == 'all':
+            self.batch = np.inf
         self.tol = tol
 
     def fit(self, X, y):
@@ -283,7 +284,7 @@ class LogisticRegression(ClassificationModels):
         else:
             self._coef = np.zeros((self._class_num - 1, self._X_shape[1]))
 
-        if self.batch == 'all' or self.batch >= self._X_shape[0]:
+        if self.batch >= self._X_shape[0]:
             self._batch = self._X_shape[0]
         elif self.batch < 1:
             self._batch = 1
@@ -471,16 +472,16 @@ class SVM(ClassificationModels):
             find_violator = False
 
             # Find all the non-bound samples
-            non_bound_indexs = []
+            non_bound_indexes = []
             for i in range(self._X_shape[0]):
                 if 0 < self._alpha[i] < self.C:
-                    non_bound_indexs.append(i)
+                    non_bound_indexes.append(i)
 
             # Second traversal, traverse all the non-bound samples and optimize, until all non-bound samples
             # satisfy KKT conditions.
             while True:
                 find_violator_this_loop = False
-                for i in non_bound_indexs:
+                for i in non_bound_indexes:
                     if self._check_epsilon_kkt_violation(i):
                         find_violator_this_loop = True
                         find_violator = True
@@ -519,7 +520,7 @@ class SVM(ClassificationModels):
         If     alpha_i = C, then            y_i * d_i <= 1 + eps
 
         :param i: The index of the coefficient to check KKT condition.
-        :return: Whether the coefficient **violates** epsiolon-KKT condition.
+        :return: Whether the coefficient **violates** epsilon-KKT condition.
         """
         return (self._alpha[i] < self.C and self._y[i] * self._E[i] < -self.eps
                 or
@@ -541,7 +542,7 @@ class SVM(ClassificationModels):
 
     def _get_unclipped_alpha2(self, i, j):
         """
-        Get the unclipped value of alpha_j by optimizting both alpha_i and alpha_j in the dual problem.
+        Get the unclipped value of alpha_j by optimizing both alpha_i and alpha_j in the dual problem.
 
         The update rule is::
 
@@ -704,64 +705,65 @@ class NeuralNetwork(SupervisedModels):
                 self.f = self._relu
                 self.df = self._d_relu
                 self._name = 'relu'
-            elif activation_function == 'prelu':
-                self.f = self._prelu
-                self.df = self._d_relu
+            elif activation_function == 'p-relu':
+                self.f = self._p_relu
+                self.df = self._d_p_relu
                 self.p = kwargs.get('p', 0.01)
-                self._name = 'prelu'
+                self._name = 'p-relu'
 
-            self.s_lcomb = None
-            self.s_act = None
+            self.linear_comb = None
+            self.output = None
 
         def __repr__(self):
             return f'{self._name} node'
 
         def _sigmoid(self):
-            self.s_act = 1 / (1 + np.exp(-self.s_lcomb))
-            return self.s_act
+            self.output = 1 / (1 + np.exp(-self.linear_comb))
+            return self.output
 
         def _d_sigmoid(self):
-            return self.s_act * (1 - self.s_act)
+            return self.output * (1 - self.output)
 
         def _linear(self):
-            self.s_act = self.s_lcomb * self.k
-            return self.s_act
+            self.output = self.linear_comb * self.k
+            return self.output
 
         def _d_linear(self):
             return self.k
 
         def _constant(self):
-            self.s_act = 1
+            self.output = 1
             return 1
 
-        def _d_constant(self):
+        @staticmethod
+        def _d_constant():
             return 0
 
         def _tanh(self):
-            self.s_act = np.tanh(self.s_lcomb)
-            return self.s_act
+            self.output = np.tanh(self.linear_comb)
+            return self.output
 
         def _d_tanh(self):
-            return 1 - self.s_act ** 2
+            return 1 - self.output ** 2
 
         def _relu(self):
-            self.s_act = max(self.s_lcomb, 0)
-            return self.s_act
+            self.output = max(self.linear_comb, 0)
+            return self.output
 
         def _d_relu(self):
-            if self.s_lcomb >= 0:
+            if self.linear_comb >= 0:
                 return 1
             return 0
 
-        def _prelu(self):
-            if self.s_lcomb >= 0:
-                self.s_act = self.s_lcomb
+        def _p_relu(self):
+            if self.linear_comb >= 0:
+                self.output = self.linear_comb
             else:
-                self.s_act = self.p * self.s_lcomb
-            return self.s_act
+                self.output = self.p * self.linear_comb
+            return self.output
 
-        def _d_prelu(self):
-            if self.s_lcomb >= 0:
+        def _d_p_relu(self):
+            if self.linear_comb >= 0:
                 return 1
             return self.p
 
@@ -834,31 +836,31 @@ class NeuralNetwork(SupervisedModels):
 
         first_layer = self.layers[0]
         for i, x_i in enumerate(x):
-            first_layer[i].s_lcomb = first_layer[i].s_act = x_i
+            first_layer[i].linear_comb = first_layer[i].output = x_i
 
         for i in range(len(self.layers) - 1):
             curr_layer = curr_layer @ self.weights[i]
             for j, node in enumerate(self.layers[i + 1]):
-                node.s_lcomb = curr_layer[j]
+                node.linear_comb = curr_layer[j]
                 curr_layer[j] = node.f()
 
     def _backward_propagate(self, y_real):
         delta_weights = [None for _ in range(len(self.weights))]
 
         # The last layer is special
-        grad = np.array([(node.s_act - y_real[i]) * node.df() for i, node in enumerate(self.layers[-1])])
+        grad = np.array([(node.output - y_real[i]) * node.df() for i, node in enumerate(self.layers[-1])])
 
         if all(grad) == 0:
             return
 
-        last_act = np.array([node.s_act for node in self.layers[-2]])
+        last_act = np.array([node.output for node in self.layers[-2]])
         delta_weights[-1] = np.outer(last_act, grad)
 
         # Process remaining layers
         for layer_index in range(-2, -len(self.layers), -1):
             grad = self.weights[layer_index + 1] @ grad
             grad = self.df(self.layers[layer_index]) * grad
-            last_act = np.array([node.s_act for node in self.layers[layer_index - 1]])
+            last_act = np.array([node.output for node in self.layers[layer_index - 1]])
             delta_weights[layer_index] = np.outer(last_act, grad)
 
         # Update weights
@@ -880,10 +882,11 @@ class NeuralNetwork(SupervisedModels):
         for i, x in enumerate(X):
             self._forward_propagate(x)
             for j, node in enumerate(self.layers[-1]):
-                res[i][j] = node.s_act
+                res[i][j] = node.output
         return res
 
-    def _preprocess_y(self, y):
+    @staticmethod
+    def _preprocess_y(y):
         if y.ndim == 1:
             return y.reshape(-1, 1)
         return y
