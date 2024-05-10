@@ -10,4 +10,6 @@ Contains:
 
 4. Neural network
 
-5. TODO: Feature engineering
+5. TODO: Decision Tree
+
+The models now support GPU acceleration, although this feature is currently experimental. It may not perform optimally on certain models. We recommend using GPU acceleration only when dealing with large datasets.
