@@ -1,0 +1,9 @@
+# Required dependencies
+
+numpy
+
+# Optional dependencies
+
+# CuPy is a library for GPU-accelerated computing.
+# Its installation depends on the corresponding CUDA version.
+# cupy
