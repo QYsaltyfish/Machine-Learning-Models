@@ -17,14 +17,22 @@ class Models:
         raise Exception("This is an empty model.")
 
     def _describe(self):
-        self._X_mean = self._p.mean(self.X, axis=0)
-        self._X_var = self._p.var(self.X, axis=0, ddof=1)
-        self._X_std = self._p.std(self.X, axis=0, ddof=1)
         self._X_shape = self.X.shape
 
     def _preprocess(self, X, y):
         try:
+            first_row = X[0]
+            for j, elem in enumerate(first_row):
+                if isinstance(elem, str):
+                    dic = dict()
+                    for i in range(len(X)):
+                        if X[i][j] in dic:
+                            X[i][j] = dic[X[i][j]]
+                        else:
+                            dic[X[i][j]] = X[i][j] = len(dic)
+
             self.X = self._p.array(X)
+
         except Exception:
             raise TypeError("X is not or cannot be converted into a ndarray.")
 
@@ -44,14 +52,19 @@ class SupervisedModels(Models):
     def _describe(self):
         super()._describe()
         self._y_shape = self.y.shape
-        self._y_mean = self._p.mean(self.y)
-        self._y_var = self._p.var(self.y, ddof=1)
-        self._y_std = self._p.std(self.y, ddof=1)
 
     def _preprocess(self, X, y):
         super()._preprocess(X, y)
 
         try:
+            if isinstance(y[0], str):
+                y_dict = dict()
+                for i, elem in enumerate(y):
+                    if elem not in y_dict:
+                        y_dict[elem] = y[i] = len(y_dict)
+                    else:
+                        y[i] = y_dict[elem]
+
             self.y = self._p.array(y)
         except Exception:
             raise TypeError("y is not or cannot be converted into a ndarray.")
@@ -98,7 +111,9 @@ class PredictionModels(SupervisedModels):
             self._X_shape = self._X.shape
         else:
             self._X = self.X
-        self._SST = self._p.sum((self.y - self._y_mean) ** 2)
+
+        _y_mean = np.mean(y)
+        self._SST = self._p.sum((self.y - _y_mean) ** 2)
 
 
 class LinearRegression(PredictionModels):
@@ -230,7 +245,7 @@ class ClassificationModels(SupervisedModels):
             else:
                 self._y[i] = y_dict[y]
         return len(y_dict)
-    
+
     @property
     def class_num_(self):
         return self._class_num
@@ -244,7 +259,7 @@ class ClassificationModels(SupervisedModels):
         else:
             self._X = self.X
 
-    
+
 class LogisticRegression(ClassificationModels):
 
     def __init__(self, fill_one=True, pre_process=False, lr=0.04, penalty='l2', C=0, max_iter=10000, tol=1e-5,
@@ -702,6 +717,123 @@ class Perceptron(ClassificationModels):
     @property
     def intercept_(self):
         return self._intercept
+
+
+class DecisionTree(ClassificationModels):
+    class TreeNodeID3:
+
+        def __init__(self, X=None, y=None, attrib=None, is_end=False, outcome=None):
+            self.X = X
+            self.y = y
+            self.children = None
+            self.attrib = attrib
+            self.is_end = is_end
+            self.outcome = outcome
+            self.entropy = None
+
+        def clear(self):
+            self.X = None
+            self.y = None
+
+        def get_outcome(self, y_uniques):
+            if self.outcome == -1:
+                return np.random.choice(y_uniques)
+            return self.outcome
+
+    def __init__(self, pre_process=False, solver='ID3'):
+        super().__init__(pre_process=pre_process)
+
+        if solver == 'ID3':
+            self.solver = self._ID3_solver
+            self.predictor = self._ID3_predictor
+        else:
+            raise NotImplementedError("Decision tree solver doesn't support " + solver)
+        self.root = None
+
+    def fit(self, X, y):
+        self._preprocess(X, y)
+        self.solver()
+
+    def predict(self, X):
+        return self.predictor(X)
+
+    def _preprocess(self, X, y):
+        super()._preprocess(X, y)
+
+        self._y = self._p.zeros_like(self.y)
+        super()._preprocess_y()
+
+        self._X_uniques = [np.unique(X) for X in self.X.T]
+        self._y_uniques = np.unique(self._y)
+
+    def _ID3_predictor(self, X):
+        X = np.array(X)
+        res = [None for _ in range(X.shape[0])]
+        for i, x in enumerate(X):
+            node = self.root
+            while not node.is_end:
+                node = node.children[x[node.attrib]]
+            res[i] = node.get_outcome(self._y_uniques)
+        return res
+
+    def _ID3_solver(self):
+        self.root = self.TreeNodeID3(self.X, self.y)
+        self._ID3_recursive(self.root)
+
+    def _ID3_recursive(self, node):
+        if node.is_end:
+            return
+
+        node.entropy = self._entropy(node.y)
+
+        if node.entropy == 0:
+            node.is_end = True
+            node.outcome = node.y[0]
+            node.clear()
+            return
+
+        best_attrib, best_gain = max(((attrib2, gain)
+                                      for attrib2, gain in enumerate(
+            self._information_gain(node, attrib1) for attrib1 in range(self._X_shape[1])
+        )), key=lambda x: x[1])
+
+        node.attrib = best_attrib
+
+        index_masks = [node.X[:, best_attrib] == X_value for X_value in self._X_uniques[best_attrib]]
+        node.children = [self.TreeNodeID3(X=node.X[mask], y=node.y[mask])
+                         if np.sum(mask) != 0
+                         else self.TreeNodeID3(is_end=True, outcome=-1)
+                         for mask in index_masks]
+
+        node.clear()
+        for child in node.children:
+            self._ID3_recursive(child)
+        return
+
+    def _information_gain(self, node, attrib):
+        return node.entropy - self._conditional_entropy(node.X, node.y, attrib)
+
+    def _entropy(self, y):
+        return -np.sum(
+            ratio * np.log2(ratio)
+            for ratio in [
+                np.sum(y == y_value) / len(y)
+                for y_value in self._y_uniques
+            ]
+            if ratio > 0
+        )
+
+    def _conditional_entropy(self, X, y, attrib):
+        return np.sum(
+            self._entropy(sub_y) * len(sub_y) / len(y) if len(sub_y) != 0 else 0
+            for sub_y in [
+                y[index_mask]
+                for index_mask in [
+                    X[:, attrib] == X_value
+                    for X_value in self._X_uniques[attrib]
+                ]
+            ]
+        )
 
 
 class NeuralNetwork(SupervisedModels):
