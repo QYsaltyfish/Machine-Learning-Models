@@ -6,11 +6,11 @@ This repository contains implementations of various machine learning models from
 
 ## Models Included
 
-1. **Multiple Linear Regression**: Including Lasso and Ridge regularization techniques.
+1. **Multiple Linear Regression**: Including Lasso & Ridge regularization techniques.
 2. **Logistic Regression**
 3. **Support Vector Machine (SVM)**: Implementations of both hard-margin and soft-margin SVM.
 4. **Neural Network**
-5. **TODO: Decision Tree**
+5. **Decision Tree**: ID3 & C4.5 algorithms (C4.5 not implemented).
 
 ## Code Usage Examples
 
@@ -78,6 +78,21 @@ nn.fit(X_train, y_train)
 
 # Make predictions
 y_pred = nn.predict(X_test)
+```
+
+### Decision Tree
+
+```python
+from MLmodels.models import DecisionTree
+
+# Create a model instance
+dt = DecisionTree()
+
+# Fit the model
+dt.fit(X_train, y_train)
+
+# Make predictions
+y_pred = dt.predict(X_test)
 ```
 
 ## GPU Acceleration
