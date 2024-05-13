@@ -91,6 +91,10 @@ class SupervisedModels(Models):
             y = y.copy()
             self._preprocess_categorical_y(y)
             self._y = self._p.array(y)
+            if len(np.unique(y)) < self._y.shape[0] // 2:
+                self._y_dtype = 0
+            else:
+                self._y_dtype = 1
         except Exception:
             raise TypeError("y is not or cannot be converted into a ndarray.")
 
@@ -237,7 +241,7 @@ class LinearRegression(PredictionModels):
         self._X_T_y = self._X_T @ self._y
 
     def _best_coef_k(self, k):
-        return self._sub_gradient(self._X_T_y[k][0] - self._X_T_X[k] @ self._coef +
+        return self._sub_gradient(self._X_T_y[k] - self._X_T_X[k] @ self._coef +
                                   self._X_T_X[k][k] * self._coef[k], k)
 
     def _sub_gradient(self, K, k):
@@ -747,16 +751,12 @@ class Perceptron(ClassificationModels):
 class DecisionTree(ClassificationModels):
     class DecisionTreeNode:
 
-        def __init__(self):
-            pass
-
-    class TreeNodeID3:
-
-        def __init__(self, X=None, y=None, attrib=None, is_end=False, outcome=None):
+        def __init__(self, X=None, y=None, is_end=False, outcome=None):
             self.X = X
             self.y = y
             self.children = None
-            self.attrib = attrib
+            self.attrib = None
+            self.value = None
             self.is_end = is_end
             self.outcome = outcome
             self.entropy = None
@@ -764,35 +764,35 @@ class DecisionTree(ClassificationModels):
         def clear(self):
             self.X = None
             self.y = None
+            self.entropy = None
 
         def get_outcome(self, y_uniques):
             if self.outcome == -1:
                 return np.random.choice(y_uniques)
             return self.outcome
 
-    class TreeNodeC45:
+    class CARTTreeNode:
 
         def __init__(self, X=None, y=None, is_end=False, outcome=None):
             self.X = X
             self.y = y
-            self.entropy = None
-            self.children = None
-            self.is_end = is_end
-            self.outcome = outcome
+            self.left = None
+            self.right = None
             self.attrib = None
             self.value = None
+            self.is_end = is_end
+            self.outcome = outcome
 
         def clear(self):
             self.X = None
             self.y = None
-            self.entropy = None
 
         def get_outcome(self, y_uniques):
             if self.outcome == -1:
                 return np.random.choice(y_uniques)
             return self.outcome
 
-    def __init__(self, pre_process=False, solver='ID3'):
+    def __init__(self, pre_process=False, solver='ID3', gini_threshold=0.05):
         super().__init__(pre_process=pre_process)
 
         if solver == 'ID3':
@@ -801,6 +801,10 @@ class DecisionTree(ClassificationModels):
         elif solver == 'C4.5':
             self.solver = self._C45_solver
             self.predictor = self._C45_predictor
+        elif solver == 'CART':
+            self.solver = self._CART_solver
+            self.predictor = self._CART_predictor
+            self.gini_threshold = gini_threshold
         else:
             raise NotImplementedError("Decision tree solver doesn't support " + solver)
         self.root = None
@@ -821,8 +825,8 @@ class DecisionTree(ClassificationModels):
         self._y_uniques = np.unique(self._y)
         self._X_sorts = [sorted(list(set(X))) if self._X_dtypes[j] == 1 else None for j, X in enumerate(self._X.T)]
         self._X_sorts = [[(sorted_X[i] + sorted_X[i + 1]) / 2
-                          for i in range(len(sorted_X) - 1)]
-                         for sorted_X in self._X_sorts if sorted_X is not None]
+                          for i in range(len(sorted_X) - 1)] if sorted_X is not None else None
+                         for sorted_X in self._X_sorts]
 
     def _ID3_predictor(self, X):
         X = self._preprocess_X_test(X)
@@ -835,7 +839,7 @@ class DecisionTree(ClassificationModels):
         return res
 
     def _ID3_solver(self):
-        self.root = self.TreeNodeID3(self._X, self._y)
+        self.root = self.DecisionTreeNode(self._X, self._y)
         self._ID3_recursive(self.root)
 
     def _ID3_recursive(self, node):
@@ -858,9 +862,9 @@ class DecisionTree(ClassificationModels):
         node.attrib = best_attrib
 
         index_masks = [node.X[:, best_attrib] == X_value for X_value in self._X_uniques[best_attrib]]
-        node.children = [self.TreeNodeID3(X=node.X[mask], y=node.y[mask])
+        node.children = [self.DecisionTreeNode(X=node.X[mask], y=node.y[mask])
                          if np.sum(mask) != 0
-                         else self.TreeNodeID3(is_end=True, outcome=-1)
+                         else self.DecisionTreeNode(is_end=True, outcome=-1)
                          for mask in index_masks]
 
         node.clear()
@@ -885,7 +889,7 @@ class DecisionTree(ClassificationModels):
         return res
 
     def _C45_solver(self):
-        self.root = self.TreeNodeC45(self._X, self._y)
+        self.root = self.DecisionTreeNode(self._X, self._y)
         self._C45_recursive(self.root)
 
     def _C45_recursive(self, node):
@@ -920,15 +924,94 @@ class DecisionTree(ClassificationModels):
             index_masks = [node.X[:, best_attrib] <= best_value, None]
             index_masks[1] = ~index_masks[0]
 
-        node.children = [self.TreeNodeID3(X=node.X[mask], y=node.y[mask])
+        node.children = [self.DecisionTreeNode(X=node.X[mask], y=node.y[mask])
                          if np.sum(mask) != 0
-                         else self.TreeNodeC45(is_end=True, outcome=-1)
+                         else self.DecisionTreeNode(is_end=True, outcome=-1)
                          for mask in index_masks]
 
         node.clear()
         for child in node.children:
             self._C45_recursive(child)
         return
+
+    def _CART_predictor(self, X):
+        X = self._preprocess_X_test(X)
+        res = [None for _ in range(X.shape[0])]
+        for i, x in enumerate(X):
+            node = self.root
+            while not node.is_end:
+                if self._X_dtypes[node.attrib] == 0:
+                    if x[node.attrib] == node.value:
+                        node = node.left
+                    else:
+                        node = node.right
+                else:
+                    if x[node.attrib] < node.value:
+                        node = node.left
+                    else:
+                        node = node.right
+            res[i] = node.get_outcome(self._y_uniques)
+        return res
+
+    def _CART_solver(self):
+        self.root = self.CARTTreeNode(self._X, self._y)
+        if self._y_dtype == 0:
+            self._CART_recursive_discrete(self.root)
+        else:
+            raise NotImplementedError('CART solver only implemented for discrete variables')
+
+    def _CART_recursive_discrete(self, node):
+        if node.is_end:
+            return
+
+        if self._gini(node.y) == 0:
+            node.is_end = True
+            node.outcome = node.y[0]
+            node.clear()
+            return
+
+        best_attrib, best_gini, best_value = (
+            min(((attrib,) + min((self._conditional_gini(node, attrib, value), value)
+                                 for value in self._X_uniques[attrib])
+                 if self._X_dtypes[attrib] == 0
+                 else (attrib,) + min(((self._conditional_gini(node, attrib, value), value)
+                                       if any(value < node.X[:, attrib]) and any(value > node.X[:, attrib])
+                                       else (np.inf, 0)
+                                       for value in self._X_sorts[attrib]),
+                                      key=lambda x: x[0])
+                 for attrib in range(self._X_shape[1])),
+                key=lambda x: x[1]))
+
+        node.attrib = best_attrib
+        node.value = best_value
+
+        if self._X_dtypes[best_attrib] == 0:
+            index_mask = node.X[:, best_attrib] == best_value
+        else:
+            index_mask = node.X[:, best_attrib] < best_value
+        not_index_mask = ~index_mask
+
+        if best_gini < self.gini_threshold:
+            node.left = self.CARTTreeNode(is_end=True, outcome=self._mode(node.y[index_mask]))
+            node.right = self.CARTTreeNode(is_end=True, outcome=self._mode(node.y[not_index_mask]))
+            node.clear()
+            return
+
+        if np.sum(index_mask) != 0:
+            node.left = self.CARTTreeNode(X=node.X[index_mask], y=node.y[index_mask])
+        else:
+            node.left = self.CARTTreeNode(is_end=True, outcome=-1)
+
+        if np.sum(not_index_mask) != 0:
+            node.right = self.CARTTreeNode(X=node.X[not_index_mask], y=node.y[not_index_mask])
+        else:
+            node.right = self.CARTTreeNode(is_end=True, outcome=-1)
+
+        node.clear()
+        if not node.left.is_end:
+            self._CART_recursive_discrete(node.left)
+        if not node.right.is_end:
+            self._CART_recursive_discrete(node.right)
 
     def _information_gain(self, node, attrib):
         return node.entropy - self._conditional_entropy_ID3(node.X, node.y, attrib)
@@ -979,6 +1062,31 @@ class DecisionTree(ClassificationModels):
         if res == 0:
             print(ys, y_total)
         return res
+
+    def _gini(self, y):
+        return 1 - np.sum(
+            ratio ** 2
+            for ratio in [
+                np.sum(y == y_value) / len(y)
+                for y_value in self._y_uniques
+            ]
+        )
+
+    def _conditional_gini(self, node, attrib, value):
+        if self._X_dtypes[attrib] == 0:
+            mask = node.X[:, attrib] == value
+        else:
+            mask = node.X[:, attrib] < value
+        y1 = node.y[mask]
+        y2 = node.y[~mask]
+        return np.sum([len(y) / len(node.y) * self._gini(y) for y in (y1, y2) if len(y) > 0])
+
+    @staticmethod
+    def _mode(y):
+        dic = dict()
+        for y_value in y:
+            dic[y_value] = dic.get(y_value, 0) + 1
+        return max(dic, key=dic.get)
 
 
 class NeuralNetwork(SupervisedModels):
