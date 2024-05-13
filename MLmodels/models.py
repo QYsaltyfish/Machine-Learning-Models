@@ -1,5 +1,6 @@
 import numpy as np
 import cupy as cp
+import copy
 import warnings
 
 
@@ -12,6 +13,7 @@ class Models:
         else:
             self._p = np
         self.X_dicts = None
+        self._X_dtypes = None
 
     def predict(self, X):
         raise Exception("This is an empty model.")
@@ -21,10 +23,16 @@ class Models:
 
     def _preprocess(self, X, y):
         try:
-            X = X.copy()
+            X = copy.deepcopy(X)
             X = self._preprocess_categorical_X(X)
 
             self._X = self._p.array(X)
+            self._X_dtypes = np.zeros(self._X.shape[1], dtype=np.int8)
+            for j, column in enumerate(self._X.T):
+                if len(np.unique(column)) < column.shape[0] // 2:
+                    self._X_dtypes[j] = 0
+                else:
+                    self._X_dtypes[j] = 1
 
         except Exception:
             raise TypeError("X is not or cannot be converted into a ndarray.")
@@ -48,6 +56,7 @@ class Models:
         if self.X_dicts is None:
             return self._p.array(X)
 
+        X = copy.deepcopy(X)
         for j, dic in enumerate(self.X_dicts):
             if dic is not None:
                 for i in range(len(X)):
@@ -107,9 +116,9 @@ class SupervisedModels(Models):
 
 class PredictionModels(SupervisedModels):
 
-    def __init__(self, fill_one=False, gpu=False):
+    def __init__(self, add_constant=False, gpu=False):
         super().__init__(gpu=gpu)
-        self.fill_one = fill_one
+        self.add_constant = add_constant
         self._SST = None
         self._SSR = None
         self._SSE = None
@@ -132,7 +141,7 @@ class PredictionModels(SupervisedModels):
 
     def _preprocess(self, X, y):
         super()._preprocess(X, y)
-        if self.fill_one:
+        if self.add_constant:
             self._X = self._p.hstack((self._p.ones((self._X_shape[0], 1)), self._X))
             self._X_shape = self._X.shape
 
@@ -142,7 +151,7 @@ class PredictionModels(SupervisedModels):
 
 class LinearRegression(PredictionModels):
 
-    def __init__(self, fill_one=True, penalty='l2', C=0, max_iter=100, tol=1e-5, gpu=False):
+    def __init__(self, add_constant=True, penalty='l2', C=0, max_iter=100, tol=1e-5, gpu=False):
         """
         Initialize the linear regression model with given parameters.
 
@@ -164,7 +173,7 @@ class LinearRegression(PredictionModels):
         To fit a multiple linear regression model without regularization, please use 'l2'
         penalty and set `C = 0`.
 
-        :param fill_one: Whether constants should be added to X
+        :param add_constant: Whether constants should be added to X
         :param penalty: The type of regularization
         :param C: Coefficient of regularization
         :param max_iter: Max iterating times for Lasso regression
@@ -172,7 +181,7 @@ class LinearRegression(PredictionModels):
         :param gpu: Whether to use GPU or not
         """
 
-        super().__init__(fill_one=fill_one, gpu=gpu)
+        super().__init__(add_constant=add_constant, gpu=gpu)
 
         if penalty == "l1":
             self.penalty = 1
@@ -216,7 +225,7 @@ class LinearRegression(PredictionModels):
 
         X_test = self._p.array(X_test)
 
-        if self.fill_one:
+        if self.add_constant:
             X_test = self._p.hstack((self._p.ones((X_test.shape[0], 1)), X_test))
 
         return X_test @ self._coef
@@ -253,11 +262,11 @@ class LinearRegression(PredictionModels):
 
 class ClassificationModels(SupervisedModels):
 
-    def __init__(self, pre_process=False, fill_one=False, gpu=False):
+    def __init__(self, pre_process=False, add_constant=False, gpu=False):
         super().__init__(gpu=gpu)
         self._y = None
         self.pre_process = pre_process
-        self.fill_one = fill_one
+        self.add_constant = add_constant
         self._class_num = None
 
     def _preprocess_y(self):
@@ -277,13 +286,13 @@ class ClassificationModels(SupervisedModels):
     def _preprocess(self, X, y):
         super()._preprocess(X, y)
 
-        if self.fill_one:
+        if self.add_constant:
             self._X = self._p.hstack((self._p.ones((self._X_shape[0], 1)), self._X))
 
 
 class LogisticRegression(ClassificationModels):
 
-    def __init__(self, fill_one=True, pre_process=False, lr=0.04, penalty='l2', C=0, max_iter=10000, tol=1e-5,
+    def __init__(self, add_constant=True, pre_process=False, lr=0.04, penalty='l2', C=0, max_iter=10000, tol=1e-5,
                  batch='all', gpu=False):
         """
         Initialize the linear regression model with given parameters.
@@ -294,7 +303,7 @@ class LogisticRegression(ClassificationModels):
 
         The optimization is done by gradient descent.
 
-        :param fill_one: Whether constants should be added to X
+        :param add_constant: Whether constants should be added to X
         :param pre_process: Whether to preprocess vector y
         :param lr: The learning rate for gradient descent
         :param penalty: The type of regularization
@@ -303,7 +312,7 @@ class LogisticRegression(ClassificationModels):
         :param tol: Tolerance for convergence criteria
         :param batch: The batch size for gradient descent
         """
-        super().__init__(pre_process=pre_process, fill_one=fill_one, gpu=gpu)
+        super().__init__(pre_process=pre_process, add_constant=add_constant, gpu=gpu)
 
         if penalty == 'l2':
             self.penalty = 2
@@ -338,9 +347,9 @@ class LogisticRegression(ClassificationModels):
         if self._class_num == 1:
             raise Exception('There is only one group of y')
         elif self._class_num == 2:
-            self._coef = self._p.zeros(self._X_shape[1] + self.fill_one)
+            self._coef = self._p.zeros(self._X_shape[1] + self.add_constant)
         else:
-            self._coef = self._p.zeros((self._class_num - 1, self._X_shape[1] + self.fill_one))
+            self._coef = self._p.zeros((self._class_num - 1, self._X_shape[1] + self.add_constant))
 
         if self.batch >= self._X_shape[0]:
             self._batch = self._X_shape[0]
@@ -368,10 +377,10 @@ class LogisticRegression(ClassificationModels):
         # TODO
         pass
 
-    def predict(self, X, threshold=0.5, fill_one=True):
+    def predict(self, X, threshold=0.5, add_constant=True):
         X = self._preprocess_X_test(X)
         if self._class_num == 2:
-            res = self.predict_prob(X, fill_one=fill_one)
+            res = self.predict_prob(X, add_constant=add_constant)
             for i in range(len(res)):
                 res[i] = 0 if res[i] < threshold else 1
             return res
@@ -379,11 +388,11 @@ class LogisticRegression(ClassificationModels):
             # TODO
             pass
 
-    def predict_prob(self, X, fill_one=True):
+    def predict_prob(self, X, add_constant=True):
         if self._class_num == 2:
             res = [0 for _ in range(X.shape[0])]
 
-            if fill_one:
+            if add_constant:
                 X = self._p.hstack((self._p.ones((X.shape[0], 1)), X))
 
             for i, x in enumerate(X):
@@ -689,7 +698,7 @@ class SVM(ClassificationModels):
 class Perceptron(ClassificationModels):
 
     def __init__(self, pre_process=False, lr=0.01):
-        super().__init__(pre_process=pre_process, fill_one=False)
+        super().__init__(pre_process=pre_process, add_constant=False)
         self.lr = lr
 
     def fit(self, X, y):
@@ -736,6 +745,11 @@ class Perceptron(ClassificationModels):
 
 
 class DecisionTree(ClassificationModels):
+    class DecisionTreeNode:
+
+        def __init__(self):
+            pass
+
     class TreeNodeID3:
 
         def __init__(self, X=None, y=None, attrib=None, is_end=False, outcome=None):
@@ -756,12 +770,37 @@ class DecisionTree(ClassificationModels):
                 return np.random.choice(y_uniques)
             return self.outcome
 
+    class TreeNodeC45:
+
+        def __init__(self, X=None, y=None, is_end=False, outcome=None):
+            self.X = X
+            self.y = y
+            self.entropy = None
+            self.children = None
+            self.is_end = is_end
+            self.outcome = outcome
+            self.attrib = None
+            self.value = None
+
+        def clear(self):
+            self.X = None
+            self.y = None
+            self.entropy = None
+
+        def get_outcome(self, y_uniques):
+            if self.outcome == -1:
+                return np.random.choice(y_uniques)
+            return self.outcome
+
     def __init__(self, pre_process=False, solver='ID3'):
         super().__init__(pre_process=pre_process)
 
         if solver == 'ID3':
             self.solver = self._ID3_solver
             self.predictor = self._ID3_predictor
+        elif solver == 'C4.5':
+            self.solver = self._C45_solver
+            self.predictor = self._C45_predictor
         else:
             raise NotImplementedError("Decision tree solver doesn't support " + solver)
         self.root = None
@@ -778,11 +817,15 @@ class DecisionTree(ClassificationModels):
 
         super()._preprocess_y()
 
-        self._X_uniques = [np.unique(X) for X in self._X.T]
+        self._X_uniques = [np.unique(X) if self._X_dtypes[j] == 0 else None for j, X in enumerate(self._X.T)]
         self._y_uniques = np.unique(self._y)
+        self._X_sorts = [sorted(list(set(X))) if self._X_dtypes[j] == 1 else None for j, X in enumerate(self._X.T)]
+        self._X_sorts = [[(sorted_X[i] + sorted_X[i + 1]) / 2
+                          for i in range(len(sorted_X) - 1)]
+                         for sorted_X in self._X_sorts if sorted_X is not None]
 
     def _ID3_predictor(self, X):
-        X = np.array(X)
+        X = self._preprocess_X_test(X)
         res = [None for _ in range(X.shape[0])]
         for i, x in enumerate(X):
             node = self.root
@@ -825,8 +868,70 @@ class DecisionTree(ClassificationModels):
             self._ID3_recursive(child)
         return
 
+    def _C45_predictor(self, X):
+        X = self._preprocess_X_test(X)
+        res = [None for _ in range(X.shape[0])]
+        for i, x in enumerate(X):
+            node = self.root
+            while not node.is_end:
+                if self._X_dtypes[node.attrib] == 0:
+                    node = node.children[x[node.attrib]]
+                else:
+                    if x[node.attrib] <= node.value:
+                        node = node.children[0]
+                    else:
+                        node = node.children[1]
+            res[i] = node.get_outcome(self._y_uniques)
+        return res
+
+    def _C45_solver(self):
+        self.root = self.TreeNodeC45(self._X, self._y)
+        self._C45_recursive(self.root)
+
+    def _C45_recursive(self, node):
+        if node.is_end:
+            return
+
+        node.entropy = self._entropy(node.y)
+
+        if node.entropy == 0:
+            node.is_end = True
+            node.outcome = node.y[0]
+            node.clear()
+            return
+
+        best_attrib, best_ratio, best_value = (
+            max(((attrib, self._information_gain_ratio(node, attrib), None)
+                 if self._X_dtypes[attrib] == 0
+                 else (attrib,) + max(((self._information_gain_ratio(node, attrib, value), value)
+                                       if any(value < node.X[:, attrib]) and any(value > node.X[:, attrib])
+                                       else (0, 0)
+                                       for value in self._X_sorts[attrib]),
+                                      key=lambda x: x[0])
+                 for attrib in range(self._X_shape[1])),
+                key=lambda x: x[1]))
+
+        node.attrib = best_attrib
+        node.value = best_value
+
+        if self._X_dtypes[best_attrib] == 0:
+            index_masks = [node.X[:, best_attrib] == X_value for X_value in self._X_uniques[best_attrib]]
+        else:
+            index_masks = [node.X[:, best_attrib] <= best_value, None]
+            index_masks[1] = ~index_masks[0]
+
+        node.children = [self.TreeNodeID3(X=node.X[mask], y=node.y[mask])
+                         if np.sum(mask) != 0
+                         else self.TreeNodeC45(is_end=True, outcome=-1)
+                         for mask in index_masks]
+
+        node.clear()
+        for child in node.children:
+            self._C45_recursive(child)
+        return
+
     def _information_gain(self, node, attrib):
-        return node.entropy - self._conditional_entropy(node.X, node.y, attrib)
+        return node.entropy - self._conditional_entropy_ID3(node.X, node.y, attrib)
 
     def _entropy(self, y):
         return -np.sum(
@@ -838,7 +943,7 @@ class DecisionTree(ClassificationModels):
             if ratio > 0
         )
 
-    def _conditional_entropy(self, X, y, attrib):
+    def _conditional_entropy_ID3(self, X, y, attrib):
         return np.sum(
             self._entropy(sub_y) * len(sub_y) / len(y) if len(sub_y) != 0 else 0
             for sub_y in [
@@ -849,6 +954,31 @@ class DecisionTree(ClassificationModels):
                 ]
             ]
         )
+
+    def _information_gain_ratio(self, node, attrib, value=None):
+        if self._X_dtypes[attrib] == 0:
+            ys = [node.y[index_mask]
+                  for index_mask
+                  in [node.X[:, attrib] == X_value for X_value in self._X_uniques[attrib]]]
+        else:
+            index_mask = node.X[:, attrib] <= value
+            ys = [node.y[index_mask], node.y[~index_mask]]
+
+        return (node.entropy - self._conditional_entropy_C45(ys, len(node.y))) / self._intrinsic_value(ys, len(node.y))
+
+    def _conditional_entropy_C45(self, ys, y_total):
+        return np.sum(
+            self._entropy(y) * len(y) / y_total if len(y) != 0 else 0
+            for y in ys
+        )
+
+    @staticmethod
+    def _intrinsic_value(ys, y_total):
+        ratios = [len(y) / y_total for y in ys]
+        res = -np.sum(ratio * np.log2(ratio) for ratio in ratios if ratio != 0)
+        if res == 0:
+            print(ys, y_total)
+        return res
 
 
 class NeuralNetwork(SupervisedModels):
