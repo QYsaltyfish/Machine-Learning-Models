@@ -10,7 +10,7 @@ This repository contains implementations of various machine learning models from
 2. **Logistic Regression**
 3. **Support Vector Machine (SVM)**: Implementations of both hard-margin and soft-margin SVM.
 4. **Neural Network**
-5. **Decision Tree**: ID3 & C4.5 algorithms (post-pruning to be implemented).
+5. **Decision Tree**: ID3 & C4.5 (post-pruning to be implemented) & CART (now only for discrete variables) algorithms.
 
 ## Code Usage Examples
 
