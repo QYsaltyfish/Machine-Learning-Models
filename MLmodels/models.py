@@ -6,35 +6,57 @@ import warnings
 class Models:
 
     def __init__(self, gpu=False):
-        self.X = None
         self._X_shape = None
         if gpu:
             self._p = cp
         else:
             self._p = np
+        self.X_dicts = None
 
     def predict(self, X):
         raise Exception("This is an empty model.")
 
     def _describe(self):
-        self._X_shape = self.X.shape
+        self._X_shape = self._X.shape
 
     def _preprocess(self, X, y):
         try:
-            first_row = X[0]
-            for j, elem in enumerate(first_row):
-                if isinstance(elem, str):
-                    dic = dict()
-                    for i in range(len(X)):
-                        if X[i][j] in dic:
-                            X[i][j] = dic[X[i][j]]
-                        else:
-                            dic[X[i][j]] = X[i][j] = len(dic)
+            X = X.copy()
+            X = self._preprocess_categorical_X(X)
 
-            self.X = self._p.array(X)
+            self._X = self._p.array(X)
 
         except Exception:
             raise TypeError("X is not or cannot be converted into a ndarray.")
+
+    def _preprocess_categorical_X(self, X):
+        first_row = X[0]
+        self.X_dicts: list[None or dict] = [None for _ in range(len(first_row))]
+
+        for j, elem in enumerate(first_row):
+            if isinstance(elem, str):
+                dic = dict()
+                for i in range(len(X)):
+                    if X[i][j] in dic:
+                        X[i][j] = dic[X[i][j]]
+                    else:
+                        dic[X[i][j]] = X[i][j] = len(dic)
+                self.X_dicts[j] = dic
+        return X
+
+    def _preprocess_X_test(self, X):
+        if self.X_dicts is None:
+            return self._p.array(X)
+
+        for j, dic in enumerate(self.X_dicts):
+            if dic is not None:
+                for i in range(len(X)):
+                    if X[i][j] in dic:
+                        X[i][j] = dic[X[i][j]]
+                    else:
+                        warnings.warn(f"{X[i][j]} is not in the training data and is automatically set to 0.")
+                        X[i][j] = 0
+        return self._p.array(X)
 
     @property
     def X_shape_(self):
@@ -46,30 +68,34 @@ class SupervisedModels(Models):
     def __init__(self, gpu=False):
         super().__init__(gpu=gpu)
 
-        self.y = None
         self._y_shape = None
+        self.y_dict = None
 
     def _describe(self):
         super()._describe()
-        self._y_shape = self.y.shape
+        self._y_shape = self._y.shape
 
     def _preprocess(self, X, y):
         super()._preprocess(X, y)
 
         try:
-            if isinstance(y[0], str):
-                y_dict = dict()
-                for i, elem in enumerate(y):
-                    if elem not in y_dict:
-                        y_dict[elem] = y[i] = len(y_dict)
-                    else:
-                        y[i] = y_dict[elem]
-
-            self.y = self._p.array(y)
+            y = y.copy()
+            self._preprocess_categorical_y(y)
+            self._y = self._p.array(y)
         except Exception:
             raise TypeError("y is not or cannot be converted into a ndarray.")
 
         self._describe()
+
+    def _preprocess_categorical_y(self, y):
+        if isinstance(y[0], str):
+            self.y_dict = dict()
+            for i, elem in enumerate(y):
+                if elem not in self.y_dict:
+                    self.y_dict[elem] = y[i] = len(self.y_dict)
+                else:
+                    y[i] = self.y_dict[elem]
+        return y
 
     @property
     def y_shape_(self):
@@ -107,13 +133,11 @@ class PredictionModels(SupervisedModels):
     def _preprocess(self, X, y):
         super()._preprocess(X, y)
         if self.fill_one:
-            self._X = self._p.hstack((self._p.ones((self._X_shape[0], 1)), self.X))
+            self._X = self._p.hstack((self._p.ones((self._X_shape[0], 1)), self._X))
             self._X_shape = self._X.shape
-        else:
-            self._X = self.X
 
         _y_mean = np.mean(y)
-        self._SST = self._p.sum((self.y - _y_mean) ** 2)
+        self._SST = self._p.sum((self._y - _y_mean) ** 2)
 
 
 class LinearRegression(PredictionModels):
@@ -182,7 +206,7 @@ class LinearRegression(PredictionModels):
                 warnings.warn("The model doesn't converge")
 
         self._y_fit = self._X @ self._coef
-        self._SSR = self._p.sum((self._y_fit - self.y) ** 2)
+        self._SSR = self._p.sum((self._y_fit - self._y) ** 2)
         self._SSE = self._SST - self._SSR
         self.R_squared = self._SSR / self._SST
 
@@ -201,7 +225,7 @@ class LinearRegression(PredictionModels):
         super()._preprocess(X, y)
         self._X_T = self._X.T
         self._X_T_X = self._X_T @ self._X
-        self._X_T_y = self._X_T @ self.y
+        self._X_T_y = self._X_T @ self._y
 
     def _best_coef_k(self, k):
         return self._sub_gradient(self._X_T_y[k][0] - self._X_T_X[k] @ self._coef +
@@ -238,7 +262,7 @@ class ClassificationModels(SupervisedModels):
 
     def _preprocess_y(self):
         y_dict = dict()
-        for i, y in enumerate(self.y):
+        for i, y in enumerate(self._y):
             if y not in y_dict:
                 self._y[i] = len(y_dict)
                 y_dict[y] = len(y_dict)
@@ -254,10 +278,7 @@ class ClassificationModels(SupervisedModels):
         super()._preprocess(X, y)
 
         if self.fill_one:
-            self._X = self._p.hstack((self._p.ones((self._X_shape[0], 1)), self.X))
-            self._X_shape = self._X.shape
-        else:
-            self._X = self.X
+            self._X = self._p.hstack((self._p.ones((self._X_shape[0], 1)), self._X))
 
 
 class LogisticRegression(ClassificationModels):
@@ -310,18 +331,16 @@ class LogisticRegression(ClassificationModels):
         super()._preprocess(X, y)
 
         if self.pre_process:
-            self._y = self._p.zeros_like(self.y)
             self._class_num = self._preprocess_y()
         else:
-            self._y = self.y
             self._class_num = len(self._p.unique(self._y))
 
         if self._class_num == 1:
             raise Exception('There is only one group of y')
         elif self._class_num == 2:
-            self._coef = self._p.zeros(self._X_shape[1])
+            self._coef = self._p.zeros(self._X_shape[1] + self.fill_one)
         else:
-            self._coef = self._p.zeros((self._class_num - 1, self._X_shape[1]))
+            self._coef = self._p.zeros((self._class_num - 1, self._X_shape[1] + self.fill_one))
 
         if self.batch >= self._X_shape[0]:
             self._batch = self._X_shape[0]
@@ -350,6 +369,7 @@ class LogisticRegression(ClassificationModels):
         pass
 
     def predict(self, X, threshold=0.5, fill_one=True):
+        X = self._preprocess_X_test(X)
         if self._class_num == 2:
             res = self.predict_prob(X, fill_one=fill_one)
             for i in range(len(res)):
@@ -452,11 +472,9 @@ class SVM(ClassificationModels):
         super()._preprocess(X, y)
 
         if self.pre_process:
-            self._y = self._p.zeros_like(self.y)
             self._preprocess_y()
             self._class_num = 2
         else:
-            self._y = self.y
             self._class_num = len(self._p.unique(self._y))
 
         if self._class_num == 1:
@@ -474,7 +492,7 @@ class SVM(ClassificationModels):
 
         for i in range(self._X_shape[0]):
             for j in range(self._X_shape[0]):
-                self._X_dot[i][j] = self._p.dot(self.X[i], self.X[j])
+                self._X_dot[i][j] = self._p.dot(self._X[i], self._X[j])
 
         for i in range(self._X_shape[0]):
             self._E[i] = -self._y[i]
@@ -543,7 +561,7 @@ class SVM(ClassificationModels):
             if not find_violator:
                 break
 
-        self._coef = sum((self._alpha[i] * self._y[i] * self.X[i] for i in range(self._X_shape[0])))
+        self._coef = sum((self._alpha[i] * self._y[i] * self._X[i] for i in range(self._X_shape[0])))
         b_star = [self._y[j] -
                   sum(self._alpha[i] * self._y[i] * self._X_dot[i][j]
                       for i in range(self._X_shape[0]) if self._alpha[i] != 0)
@@ -690,10 +708,8 @@ class Perceptron(ClassificationModels):
         super()._preprocess(X, y)
 
         if self.pre_process:
-            self._y = self._p.zeros_like(self.y)
             self._class_num = self._preprocess_y()
         else:
-            self._y = self.y
             self._class_num = len(self._p.unique(self._y))
 
         if self._class_num == 1:
@@ -760,10 +776,9 @@ class DecisionTree(ClassificationModels):
     def _preprocess(self, X, y):
         super()._preprocess(X, y)
 
-        self._y = self._p.zeros_like(self.y)
         super()._preprocess_y()
 
-        self._X_uniques = [np.unique(X) for X in self.X.T]
+        self._X_uniques = [np.unique(X) for X in self._X.T]
         self._y_uniques = np.unique(self._y)
 
     def _ID3_predictor(self, X):
@@ -777,7 +792,7 @@ class DecisionTree(ClassificationModels):
         return res
 
     def _ID3_solver(self):
-        self.root = self.TreeNodeID3(self.X, self.y)
+        self.root = self.TreeNodeID3(self._X, self._y)
         self._ID3_recursive(self.root)
 
     def _ID3_recursive(self, node):
