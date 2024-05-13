@@ -97,7 +97,13 @@ y_pred = dt.predict(X_test)
 
 ## GPU Acceleration
 
-The models now support GPU acceleration, although this feature is currently experimental. It may not perform optimally on certain models. We recommend using GPU acceleration only when dealing with large datasets.
+The models now support GPU acceleration, although this feature is currently experimental. It may not perform optimally on certain models. We recommend using GPU acceleration only when dealing with large datasets. 
+
+To disable GPU acceleration, please follow these steps:
+1. Open the Python file models.py.
+2. Locate the import statement: `import cupy as cp`.
+3. Delete or comment out this line.
+4. Add the following line after the import statements: `cp = np`.
 
 ## Usage Notes
 
