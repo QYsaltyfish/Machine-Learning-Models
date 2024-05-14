@@ -203,7 +203,7 @@ class LinearRegression(PredictionModels):
         self._preprocess(X, y)
 
         if self.penalty == 2:
-            self._coef = self._p.linalg.inv(self._X_T_X + self.C * self._p.eye(self._X_shape[1])) @ self._X_T_y
+            self._coef = self._p.linalg.pinv(self._X_T_X + self.C * self._p.eye(self._X_shape[1])) @ self._X_T_y
         else:
             is_converge = False
             self._coef = self._p.zeros(self._X_shape[1])
@@ -221,7 +221,7 @@ class LinearRegression(PredictionModels):
         self._y_fit = self._X @ self._coef
         self._SSR = self._p.sum((self._y_fit - self._y) ** 2)
         self._SSE = self._SST - self._SSR
-        self.R_squared = self._SSR / self._SST
+        self.R_squared = self._SSE / self._SST
 
     def predict(self, X_test):
         if self._coef is None:
@@ -780,6 +780,7 @@ class DecisionTree(ClassificationModels):
             self.right = None
             self.attrib = None
             self.value = None
+            self.std = None
             self.is_end = is_end
             self.outcome = outcome
 
@@ -787,12 +788,15 @@ class DecisionTree(ClassificationModels):
             self.X = None
             self.y = None
 
-        def get_outcome(self, y_uniques):
+        def get_outcome(self, y_uniques=None, y_mean=None):
             if self.outcome == -1:
-                return np.random.choice(y_uniques)
+                if y_uniques is not None:
+                    return np.random.choice(y_uniques)
+                else:
+                    return y_mean
             return self.outcome
 
-    def __init__(self, pre_process=False, solver='ID3', gini_threshold=0.05):
+    def __init__(self, pre_process=False, solver='ID3', gini_threshold=0.05, std_threshold=0.1):
         super().__init__(pre_process=pre_process)
 
         if solver == 'ID3':
@@ -805,6 +809,7 @@ class DecisionTree(ClassificationModels):
             self.solver = self._CART_solver
             self.predictor = self._CART_predictor
             self.gini_threshold = gini_threshold
+            self.std_threshold = std_threshold
         else:
             raise NotImplementedError("Decision tree solver doesn't support " + solver)
         self.root = None
@@ -819,10 +824,11 @@ class DecisionTree(ClassificationModels):
     def _preprocess(self, X, y):
         super()._preprocess(X, y)
 
-        super()._preprocess_y()
+        if self._y_dtype == 0:
+            super()._preprocess_y()
+            self._y_uniques = np.unique(self._y)
 
         self._X_uniques = [np.unique(X) if self._X_dtypes[j] == 0 else None for j, X in enumerate(self._X.T)]
-        self._y_uniques = np.unique(self._y)
         self._X_sorts = [sorted(list(set(X))) if self._X_dtypes[j] == 1 else None for j, X in enumerate(self._X.T)]
         self._X_sorts = [[(sorted_X[i] + sorted_X[i + 1]) / 2
                           for i in range(len(sorted_X) - 1)] if sorted_X is not None else None
@@ -936,6 +942,7 @@ class DecisionTree(ClassificationModels):
 
     def _CART_predictor(self, X):
         X = self._preprocess_X_test(X)
+        y_mean = np.mean(self._y)
         res = [None for _ in range(X.shape[0])]
         for i, x in enumerate(X):
             node = self.root
@@ -950,7 +957,10 @@ class DecisionTree(ClassificationModels):
                         node = node.left
                     else:
                         node = node.right
-            res[i] = node.get_outcome(self._y_uniques)
+            if self._y_dtype == 0:
+                res[i] = node.get_outcome(y_uniques=self._y_uniques)
+            else:
+                res[i] = node.get_outcome(y_mean=y_mean)
         return res
 
     def _CART_solver(self):
@@ -958,7 +968,8 @@ class DecisionTree(ClassificationModels):
         if self._y_dtype == 0:
             self._CART_recursive_discrete(self.root)
         else:
-            raise NotImplementedError('CART solver only implemented for discrete variables')
+            self._goal_std = self.std_threshold * np.std(self._y)
+            self._CART_recursive_continuous(self.root)
 
     def _CART_recursive_discrete(self, node):
         if node.is_end:
@@ -1012,6 +1023,66 @@ class DecisionTree(ClassificationModels):
             self._CART_recursive_discrete(node.left)
         if not node.right.is_end:
             self._CART_recursive_discrete(node.right)
+
+    def _CART_recursive_continuous(self, node):
+        if node.is_end:
+            return
+
+        node.std = np.std(node.y)
+        if node.std == 0:
+            node.is_end = True
+            node.outcome = np.mean(node.y)
+            node.clear()
+            return
+
+        best_attrib, best_std, best_value = (
+            min(((attrib,) + min((self._conditional_std(node, attrib, value), value)
+                                 for value in self._X_uniques[attrib])
+                 if self._X_dtypes[attrib] == 0
+                 else (attrib,) + min(((self._conditional_std(node, attrib, value), value)
+                                       if any(value < node.X[:, attrib]) and any(value > node.X[:, attrib])
+                                       else (np.inf, 0)
+                                       for value in self._X_sorts[attrib]),
+                                      key=lambda x: x[0])
+                 for attrib in range(self._X_shape[1])),
+                key=lambda x: x[1]))
+
+        if best_std >= node.std:
+            node.is_end = True
+            node.outcome = np.mean(node.y)
+            node.clear()
+            return
+
+        node.attrib = best_attrib
+        node.value = best_value
+
+        if self._X_dtypes[best_attrib] == 0:
+            index_mask = node.X[:, best_attrib] == best_value
+        else:
+            index_mask = node.X[:, best_attrib] < best_value
+        not_index_mask = ~index_mask
+
+        if best_std < self._goal_std:
+            node.left = self.CARTTreeNode(is_end=True, outcome=np.mean(node.y[index_mask]))
+            node.right = self.CARTTreeNode(is_end=True, outcome=np.mean(node.y[not_index_mask]))
+            node.clear()
+            return
+
+        if np.sum(index_mask) != 0:
+            node.left = self.CARTTreeNode(X=node.X[index_mask], y=node.y[index_mask])
+        else:
+            node.left = self.CARTTreeNode(is_end=True, outcome=-1)
+
+        if np.sum(not_index_mask) != 0:
+            node.right = self.CARTTreeNode(X=node.X[not_index_mask], y=node.y[not_index_mask])
+        else:
+            node.right = self.CARTTreeNode(is_end=True, outcome=-1)
+
+        node.clear()
+        if not node.left.is_end:
+            self._CART_recursive_continuous(node.left)
+        if not node.right.is_end:
+            self._CART_recursive_continuous(node.right)
 
     def _information_gain(self, node, attrib):
         return node.entropy - self._conditional_entropy_ID3(node.X, node.y, attrib)
@@ -1080,6 +1151,15 @@ class DecisionTree(ClassificationModels):
         y1 = node.y[mask]
         y2 = node.y[~mask]
         return np.sum([len(y) / len(node.y) * self._gini(y) for y in (y1, y2) if len(y) > 0])
+
+    def _conditional_std(self, node, attrib, value):
+        if self._X_dtypes[attrib] == 0:
+            mask = node.X[:, attrib] == value
+        else:
+            mask = node.X[:, attrib] < value
+        y1 = node.y[mask]
+        y2 = node.y[~mask]
+        return np.sum([np.std(y) for y in (y1, y2) if len(y) > 0])
 
     @staticmethod
     def _mode(y):
