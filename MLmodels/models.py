@@ -1311,7 +1311,7 @@ class NeuralNetwork(SupervisedModels):
                 return 1
             return self.p
 
-    def __init__(self, lr=0.01, max_iter=1, weight_init='xavier', gpu=False):
+    def __init__(self, lr=0.001, max_iter=1, weight_init='xavier', optimizer='adam', gpu=False):
         super().__init__(gpu=gpu)
 
         self.layers: list[list[NeuralNetwork.Node]] = [[], []]
@@ -1326,6 +1326,21 @@ class NeuralNetwork(SupervisedModels):
             self.weight_init = 2
         else:
             self.weight_init = 0
+
+        if optimizer == 'adam':
+            self.optimizer = 0
+            self.t = 0
+            self.beta1 = 0.9
+            self.beta2 = 0.999
+            self.epsilon = 1e-8
+            self.m = None
+            self.v = None
+            self._update_weights = self._update_weights_adam
+        elif optimizer == 'sgd':
+            self.optimizer = 1
+            self._update_weights = self._update_weights_sgd
+        else:
+            raise NotImplementedError(f'Optimizer {optimizer} not implemented')
 
     def set_input_layer(self, input_length, add_constant=False):
         self.layers[0] = [self.Node() for _ in range(input_length)]
@@ -1408,14 +1423,30 @@ class NeuralNetwork(SupervisedModels):
             last_act = self._p.array([node.output for node in self.layers[layer_index - 1]])
             delta_weights[layer_index] = self._p.outer(last_act, grad)
 
-        # Update weights
+        self._update_weights(delta_weights)
+
+    def _update_weights_sgd(self, delta_weights):
         for i, delta_weight in enumerate(delta_weights):
             self.weights[i] -= delta_weight
+
+    def _update_weights_adam(self, delta_weights):
+        self.t += 1
+        for i, delta_weight in enumerate(delta_weights):
+            self.m[i] = self.beta1 * self.m[i] + (1 - self.beta1) * delta_weight
+            self.v[i] = self.beta2 * self.v[i] + (1 - self.beta2) * (delta_weight ** 2)
+
+            m_hat = self.m[i] / (1 - self.beta1 ** self.t)
+            v_hat = self.v[i] / (1 - self.beta2 ** self.t)
+
+            self.weights[i] -= self.lr * m_hat / (np.sqrt(v_hat) + self.epsilon)
 
     def fit(self, X, y):
         y = self._preprocess_y(y)
         if self.weights is None:
             self._generate_weights()
+        if self.optimizer == 0:
+            self.m = [np.zeros_like(w) for w in self.weights]
+            self.v = [np.zeros_like(w) for w in self.weights]
 
         for _ in range(self.max_iter):
             for x, y_real in zip(X, y):
