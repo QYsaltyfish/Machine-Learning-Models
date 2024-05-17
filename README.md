@@ -133,6 +133,29 @@ dt.fit(X_train, y_train)
 y_pred = dt.predict(X_test)
 ```
 
+#### Solver Options
+
+The `DecisionTree` model supports three algorithms:
+
+* To use the ID3 algorithm, set `solver='ID3'`.
+
+* To use the C4.5 algorithm, set `solver='C4.5'`.
+
+* To use the CART algorithm, set `solver='CART'`.
+
+Additionally, you can specify the maximum depth of the tree using the `max_depth` parameter.
+
+```python
+# Create a model instance using the ID3 algorithm
+dt_id3 = DecisionTree(solver='ID3', max_depth=5)
+
+# Create a model instance using the C4.5 algorithm
+dt_c45 = DecisionTree(solver='C4.5', max_depth=5)
+
+# Create a model instance using the CART algorithm
+dt_cart = DecisionTree(solver='CART', max_depth=5)
+```
+
 ## GPU Acceleration
 
 The models now support GPU acceleration, although this feature is currently experimental. It may not perform optimally on certain models. We recommend using GPU acceleration only when dealing with large datasets. 
