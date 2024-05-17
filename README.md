@@ -11,6 +11,7 @@ This repository contains implementations of various machine learning models from
 3. **Support Vector Machine (SVM)**: Implementations of both hard-margin and soft-margin SVM.
 4. **Neural Network**: Implementations of both Adam and SGD optimizer.
 5. **Decision Tree**: ID3 & C4.5 (post-pruning to be implemented) & CART algorithms.
+6. **K-means**
 
 ## Code Usage Examples
 
@@ -170,6 +171,32 @@ dt_c45 = DecisionTree(solver='C4.5', max_depth=5)
 # Create a model instance using the CART algorithm
 dt_cart = DecisionTree(solver='CART', max_depth=5)
 ```
+
+### K-means
+
+```python
+from MLmodels.models import KMeans
+
+# Create a model instance
+km = KMeans(k=5)
+
+# Fit the model
+km.fit(X)
+
+# Make predictions
+X_classes = km.predict(X)
+
+# Check centroids
+centroids = km.centroids
+```
+
+#### Initialization Methods
+
+The `KMeans` model supports two initialization methods:
+
+* To use the k-means++ initialization, set `init_method='kmeans++'`.
+
+* To use random initialization, set `init_method='random'`.
 
 ## GPU Acceleration
 
