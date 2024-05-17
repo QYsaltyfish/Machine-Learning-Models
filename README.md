@@ -121,8 +121,9 @@ y_pred = nn.predict(X_test)
 #### Optimizer Options
 The `NeuralNetwork` model supports two optimizers: Adam and SGD. You can specify the optimizer during the model initialization:
 
-To use the Adam optimizer, set `optimizer='adam'`.
-To use the SGD optimizer, set `optimizer='sgd'`.
+* To use the Adam optimizer, set `optimizer='adam'`.
+
+* To use the SGD optimizer, set `optimizer='sgd'`.
 
 ```python
 # Create a model instance using the Adam optimizer
