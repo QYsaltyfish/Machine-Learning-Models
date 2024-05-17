@@ -297,7 +297,7 @@ class ClassificationModels(SupervisedModels):
 class LogisticRegression(ClassificationModels):
 
     def __init__(self, add_constant=True, pre_process=False, lr=0.04, penalty='l2', C=0, max_iter=10000, tol=1e-5,
-                 batch='all', gpu=False):
+                 batch='all', solver='newton', gpu=False):
         """
         Initialize the linear regression model with given parameters.
 
@@ -315,6 +315,8 @@ class LogisticRegression(ClassificationModels):
         :param max_iter: Max iterating times for Lasso regression
         :param tol: Tolerance for convergence criteria
         :param batch: The batch size for gradient descent
+        :param solver: The solver used for logistic regression
+        :param gpu: Whether to use GPU or not
         """
         super().__init__(pre_process=pre_process, add_constant=add_constant, gpu=gpu)
 
@@ -326,6 +328,13 @@ class LogisticRegression(ClassificationModels):
         else:
             raise NotImplementedError(f'{penalty} penalty has not been implemented.')
 
+        if solver == 'newton':
+            self.solver = 0
+        elif solver == 'gradient descent':
+            self.solver = 1
+        else:
+            raise NotImplementedError(f'{solver} solver has not been implemented.')
+
         self.C = C
         self.max_iter = max_iter
         self.lr = lr
@@ -335,10 +344,13 @@ class LogisticRegression(ClassificationModels):
 
     def fit(self, X, y):
         self._preprocess(X, y)
-        if self._class_num == 2:
-            self._binary_solver()
+        if self.solver == 1:
+            if self._class_num == 2:
+                self._binary_solver()
+            else:
+                self._multiclass_solver()
         else:
-            self._multiclass_solver()
+            self._newton_solver()
 
     def _preprocess(self, X, y):
         super()._preprocess(X, y)
@@ -363,12 +375,26 @@ class LogisticRegression(ClassificationModels):
         else:
             self._batch = int(self.batch)
 
+    def _newton_solver(self):
+        for _ in range(self.max_iter):
+            curr_coef = self._coef.copy()
+            y_prob = np.array([self._sigmoid_vector(x) for x in self._X])
+            gradient = self._X.T @ (self._y - y_prob) - self.C * self._coef
+            Hessian = self._X.T @ np.diag(y_prob * (y_prob - 1)) @ self._X - self.C * np.eye(self._X.shape[1])
+            self._coef -= np.linalg.pinv(Hessian) @ gradient
+            if np.max(np.abs(curr_coef - self._coef)) < self.tol:
+                break
+        else:
+            warnings.warn("The model doesn't converge, try higher max_iter")
+
     def _binary_solver(self):
         for _ in range(self.max_iter):
             curr_coef = self._coef.copy()
             self._binary_gradient_descent()
             if self._p.max(abs(curr_coef - self._coef)) < self.tol:
                 break
+        else:
+            warnings.warn("The model doesn't converge, try higher max_iter")
 
     def _binary_gradient_descent(self):
         index_list = self._p.random.choice(self._p.arange(self._X_shape[0]), self._batch, replace=False)
@@ -414,6 +440,9 @@ class LogisticRegression(ClassificationModels):
     def _sigmoid(x):
         return 1 / (1 + np.exp(-x))
 
+    def _sigmoid_vector(self, X):
+        return 1 / (1 + np.exp(- self._coef @ X))
+
 
 class SVM(ClassificationModels):
 
@@ -440,7 +469,7 @@ class SVM(ClassificationModels):
 
         if margin == 'hard':
             self._margin = 0
-            warnings.warn("Hard-margin SVM hasn't been done yet")
+            raise NotImplementedError("Hard-margin SVM hasn't been done yet")
         elif margin == 'soft':
             self._margin = 1
         else:
@@ -796,7 +825,7 @@ class DecisionTree(ClassificationModels):
                     return y_mean
             return self.outcome
 
-    def __init__(self, pre_process=False, solver='ID3', gini_threshold=0.05, std_threshold=0.1):
+    def __init__(self, pre_process=False, solver='ID3', gini_threshold=0.05, std_threshold=0.1, max_depth=5):
         super().__init__(pre_process=pre_process)
 
         if solver == 'ID3':
@@ -813,6 +842,7 @@ class DecisionTree(ClassificationModels):
         else:
             raise NotImplementedError("Decision tree solver doesn't support " + solver)
         self.root = None
+        self.max_depth = max_depth
 
     def fit(self, X, y):
         self._preprocess(X, y)
@@ -825,8 +855,9 @@ class DecisionTree(ClassificationModels):
         super()._preprocess(X, y)
 
         if self._y_dtype == 0:
-            super()._preprocess_y()
             self._y_uniques = np.unique(self._y)
+            if self.pre_process:
+                super()._preprocess_y()
 
         self._X_uniques = [np.unique(X) if self._X_dtypes[j] == 0 else None for j, X in enumerate(self._X.T)]
         self._X_sorts = [sorted(list(set(X))) if self._X_dtypes[j] == 1 else None for j, X in enumerate(self._X.T)]
@@ -846,9 +877,9 @@ class DecisionTree(ClassificationModels):
 
     def _ID3_solver(self):
         self.root = self.DecisionTreeNode(self._X, self._y)
-        self._ID3_recursive(self.root)
+        self._ID3_recursive(self.root, 0)
 
-    def _ID3_recursive(self, node):
+    def _ID3_recursive(self, node, depth):
         if node.is_end:
             return
 
@@ -857,6 +888,12 @@ class DecisionTree(ClassificationModels):
         if node.entropy == 0:
             node.is_end = True
             node.outcome = node.y[0]
+            node.clear()
+            return
+
+        if depth == self.max_depth:
+            node.is_end = True
+            node.outcome = self._mode(node.y)
             node.clear()
             return
 
@@ -875,7 +912,7 @@ class DecisionTree(ClassificationModels):
 
         node.clear()
         for child in node.children:
-            self._ID3_recursive(child)
+            self._ID3_recursive(child, depth + 1)
         return
 
     def _C45_predictor(self, X):
@@ -896,9 +933,9 @@ class DecisionTree(ClassificationModels):
 
     def _C45_solver(self):
         self.root = self.DecisionTreeNode(self._X, self._y)
-        self._C45_recursive(self.root)
+        self._C45_recursive(self.root, 0)
 
-    def _C45_recursive(self, node):
+    def _C45_recursive(self, node, depth):
         if node.is_end:
             return
 
@@ -907,6 +944,12 @@ class DecisionTree(ClassificationModels):
         if node.entropy == 0:
             node.is_end = True
             node.outcome = node.y[0]
+            node.clear()
+            return
+
+        if depth == self.max_depth:
+            node.is_end = True
+            node.outcome = self._mode(node.y)
             node.clear()
             return
 
@@ -937,7 +980,7 @@ class DecisionTree(ClassificationModels):
 
         node.clear()
         for child in node.children:
-            self._C45_recursive(child)
+            self._C45_recursive(child, depth + 1)
         return
 
     def _CART_predictor(self, X):
@@ -966,18 +1009,24 @@ class DecisionTree(ClassificationModels):
     def _CART_solver(self):
         self.root = self.CARTTreeNode(self._X, self._y)
         if self._y_dtype == 0:
-            self._CART_recursive_discrete(self.root)
+            self._CART_recursive_discrete(self.root, 0)
         else:
             self._goal_std = self.std_threshold * np.std(self._y)
-            self._CART_recursive_continuous(self.root)
+            self._CART_recursive_continuous(self.root, 0)
 
-    def _CART_recursive_discrete(self, node):
+    def _CART_recursive_discrete(self, node, depth):
         if node.is_end:
             return
 
         if self._gini(node.y) == 0:
             node.is_end = True
             node.outcome = node.y[0]
+            node.clear()
+            return
+
+        if depth == self.max_depth:
+            node.is_end = True
+            node.outcome = self._mode(node.y)
             node.clear()
             return
 
@@ -1020,16 +1069,22 @@ class DecisionTree(ClassificationModels):
 
         node.clear()
         if not node.left.is_end:
-            self._CART_recursive_discrete(node.left)
+            self._CART_recursive_discrete(node.left, 0)
         if not node.right.is_end:
-            self._CART_recursive_discrete(node.right)
+            self._CART_recursive_discrete(node.right, 0)
 
-    def _CART_recursive_continuous(self, node):
+    def _CART_recursive_continuous(self, node, depth):
         if node.is_end:
             return
 
         node.std = np.std(node.y)
         if node.std == 0:
+            node.is_end = True
+            node.outcome = np.mean(node.y)
+            node.clear()
+            return
+
+        if depth == self.max_depth:
             node.is_end = True
             node.outcome = np.mean(node.y)
             node.clear()
@@ -1080,9 +1135,9 @@ class DecisionTree(ClassificationModels):
 
         node.clear()
         if not node.left.is_end:
-            self._CART_recursive_continuous(node.left)
+            self._CART_recursive_continuous(node.left, 0)
         if not node.right.is_end:
-            self._CART_recursive_continuous(node.right)
+            self._CART_recursive_continuous(node.right, 0)
 
     def _information_gain(self, node, attrib):
         return node.entropy - self._conditional_entropy_ID3(node.X, node.y, attrib)
