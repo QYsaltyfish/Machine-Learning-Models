@@ -21,7 +21,7 @@ class Models:
     def _describe(self):
         self._X_shape = self._X.shape
 
-    def _preprocess(self, X, y):
+    def _preprocess_X(self, X):
         try:
             X = copy.deepcopy(X)
             X = self._preprocess_categorical_X(X)
@@ -84,8 +84,11 @@ class SupervisedModels(Models):
         super()._describe()
         self._y_shape = self._y.shape
 
+    def fit(self, X, y):
+        raise Exception("This is an empty model.")
+
     def _preprocess(self, X, y):
-        super()._preprocess(X, y)
+        super()._preprocess_X(X)
 
         try:
             y = y.copy()
@@ -113,9 +116,6 @@ class SupervisedModels(Models):
     @property
     def y_shape_(self):
         return self._y_shape
-
-    def fit(self, X, y):
-        raise Exception("This is an empty model.")
 
 
 class PredictionModels(SupervisedModels):
@@ -1441,7 +1441,9 @@ class NeuralNetwork(SupervisedModels):
             self.weights[i] -= self.lr * m_hat / (np.sqrt(v_hat) + self.epsilon)
 
     def fit(self, X, y):
-        y = self._preprocess_y(y)
+        super()._preprocess(X, y)
+        self._preprocess_y()
+
         if self.weights is None:
             self._generate_weights()
         if self.optimizer == 0:
@@ -1449,7 +1451,7 @@ class NeuralNetwork(SupervisedModels):
             self.v = [np.zeros_like(w) for w in self.weights]
 
         for _ in range(self.max_iter):
-            for x, y_real in zip(X, y):
+            for x, y_real in zip(self._X, self._y):
                 self._forward_propagate(x)
                 self._backward_propagate(y_real)
 
@@ -1461,8 +1463,74 @@ class NeuralNetwork(SupervisedModels):
                 res[i][j] = node.output
         return res
 
-    @staticmethod
-    def _preprocess_y(y):
-        if y.ndim == 1:
-            return y.reshape(-1, 1)
-        return y
+    def _preprocess_y(self):
+        if self._y.ndim == 1:
+            self._y = self._y.reshape(-1, 1)
+
+
+class UnsupervisedModels(Models):
+
+    def __init__(self, gpu=False):
+        super().__init__(gpu=gpu)
+
+    def fit(self, X):
+        raise Exception("This is an empty model.")
+
+    def _preprocess_X(self, X):
+        super()._preprocess_X(X)
+
+
+class KMeans(UnsupervisedModels):
+
+    def __init__(self, k=5, gpu=False, max_iter=100, init_method='kmeans++'):
+        super().__init__(gpu=gpu)
+
+        self.k = k
+        self.centroids = None
+        self.max_iter = max_iter
+
+        if init_method == 'kmeans++':
+            self._init_centroids = self._init_centroids_kpp
+        elif init_method == 'random':
+            self._init_centroids = self._init_centroids_random
+        else:
+            raise Exception("init_method must be either 'kmeans++' or 'random'")
+
+    def _preprocess_X(self, X):
+        super()._preprocess_X(X)
+
+    def fit(self, X):
+        self._preprocess_X(X)
+
+        self._init_centroids()
+        for _ in range(self.max_iter):
+            last_centroids = self.centroids.copy()
+            clusters = [[] for _ in range(self.k)]
+
+            for x in self._X:
+                clusters[np.argmin(np.linalg.norm(x - self.centroids, axis=1))].append(x)
+
+            self.centroids = [np.mean(cluster, axis=0) for cluster in clusters]
+
+            if np.allclose(self.centroids, last_centroids):
+                break
+        else:
+            warnings.warn("Maximum number of iterations reached.")
+
+    def _init_centroids_kpp(self):
+        self.centroids = [self._X[np.random.randint(len(self._X))]]
+        for _ in range(self.k - 1):
+            distances = [min(np.linalg.norm(x - centroid) ** 2 for centroid in self.centroids) for x in self._X]
+            sum_distances = np.sum(distances)
+            distances /= sum_distances
+            self.centroids.append(self._X[np.random.choice(range(len(self._X)), p=distances)])
+
+    def _init_centroids_random(self):
+        self.centroids = self._X[np.random.choice(range(len(self._X)), self.k, replace=False)]
+
+    def predict(self, X):
+        X = self._preprocess_X_test(X)
+        res = np.zeros(X.shape[0])
+        for i, x in enumerate(X):
+            res[i] = np.argmin(np.linalg.norm(self.centroids - x, axis=1))
+        return res
