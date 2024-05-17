@@ -31,6 +31,24 @@ lr.fit(X_train, y_train)
 y_pred = lr.predict(X_test)
 ```
 
+#### Regularization Options
+
+The `LinearRegression` model supports regularization through the `penalty` and `C` parameters.
+
+* To use Lasso regression (L1 regularization), set `penalty='l1'`.
+
+* To use Ridge regression (L2 regularization), set `penalty='l2'`.
+
+The parameter `C` controls the strength of the regularization; larger values of `C` specify stronger regularization.
+
+```python
+# Create a model instance with L1 regularization (Lasso)
+lr_l1 = LinearRegression(penalty='l1', C=1)
+
+# Create a model instance with L2 regularization (Ridge)
+lr_l2 = LinearRegression(penalty='l2', C=1)
+```
+
 ### Logistic Regression
 
 ```python
@@ -44,6 +62,26 @@ lr.fit(X_train, y_train)
 
 # Make predictions
 y_pred = lr.predict(X_test)
+```
+
+#### Solver Options
+
+The `Logistic Regression` model supports two solvers: Newton's method (default) and gradient descent.
+
+To use gradient descent as the solver, you can specify it during the model initialization:
+
+```python
+# Create a model instance using gradient descent as the solver
+lr = LogisticRegression(solver='gradient descent')
+```
+
+#### Regularization
+
+You can adjust the regularization strength using the parameter `C`. The parameter `C` is the regularization strength; larger values specify stronger regularization.
+
+```python
+# Create a model instance with regularization parameter C
+lr = LogisticRegression(C=1)
 ```
 
 ### SVM
