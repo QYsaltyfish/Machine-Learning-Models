@@ -1534,3 +1534,59 @@ class KMeans(UnsupervisedModels):
         for i, x in enumerate(X):
             res[i] = np.argmin(np.linalg.norm(self.centroids - x, axis=1))
         return res
+
+
+class KMedians(UnsupervisedModels):
+
+    def __init__(self, k=5, gpu=False, max_iter=100, init_method='k++'):
+        super().__init__(gpu=gpu)
+
+        self.k = k
+        self.centroids = None
+        self.max_iter = max_iter
+
+        if init_method == 'k++':
+            self._init_centroids = self._init_centroids_kpp
+        elif init_method == 'random':
+            self._init_centroids = self._init_centroids_random
+        else:
+            raise Exception("init_method must be either 'k++' or 'random'")
+
+    def _preprocess_X(self, X):
+        super()._preprocess_X(X)
+
+    def fit(self, X):
+        self._preprocess_X(X)
+
+        self._init_centroids()
+        for _ in range(self.max_iter):
+            last_centroids = self.centroids.copy()
+            clusters = [[] for _ in range(self.k)]
+
+            for x in self._X:
+                clusters[np.argmin(np.linalg.norm(x - self.centroids, ord=1, axis=1))].append(x)
+
+            self.centroids = [np.median(cluster, axis=0) for cluster in clusters]
+
+            if np.allclose(self.centroids, last_centroids):
+                break
+        else:
+            warnings.warn("Maximum number of iterations reached.")
+
+    def _init_centroids_kpp(self):
+        self.centroids = [self._X[np.random.randint(len(self._X))]]
+        for _ in range(self.k - 1):
+            distances = [min(np.linalg.norm(x - centroid, ord=1) for centroid in self.centroids) for x in self._X]
+            sum_distances = np.sum(distances)
+            distances /= sum_distances
+            self.centroids.append(self._X[np.random.choice(range(len(self._X)), p=distances)])
+
+    def _init_centroids_random(self):
+        self.centroids = self._X[np.random.choice(range(len(self._X)), self.k, replace=False)]
+
+    def predict(self, X):
+        X = self._preprocess_X_test(X)
+        res = np.zeros(X.shape[0])
+        for i, x in enumerate(X):
+            res[i] = np.argmin(np.linalg.norm(self.centroids - x, axis=1))
+        return res
