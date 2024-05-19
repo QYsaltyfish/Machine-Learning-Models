@@ -11,7 +11,7 @@ This repository contains implementations of various machine learning models from
 3. **Support Vector Machine (SVM)**: Implementations of both hard-margin and soft-margin SVM.
 4. **Neural Network**: Implementations of both Adam and SGD optimizer.
 5. **Decision Tree**: ID3 & C4.5 (post-pruning to be implemented) & CART algorithms.
-6. **K-means**
+6. **K-means**: Including K-median algorithm.
 
 ## Code Usage Examples
 
@@ -197,6 +197,26 @@ The `KMeans` model supports two initialization methods:
 * To use the k-means++ initialization, set `init_method='kmeans++'`.
 
 * To use random initialization, set `init_method='random'`.
+
+#### K-medians Algorithm
+
+In addition to the standard K-means algorithm, the model also supports the K-medians algorithm.
+
+```python
+from MLmodels.models import KMedians
+
+# Create a model instance
+km = KMedians(k=5, init_method='k++')
+
+# Fit the model
+km.fit(X)
+
+# Make predictions
+X_classes = km.predict(X)
+
+# Check centroids
+centroids = km.centroids
+```
 
 ## GPU Acceleration
 
