@@ -1,6 +1,7 @@
 import numpy as np
 import cupy as cp
 import copy
+from collections import deque
 import warnings
 
 
@@ -23,8 +24,13 @@ class Models:
 
     def _preprocess_X(self, X):
         try:
-            X = copy.deepcopy(X)
-            X = self._preprocess_categorical_X(X)
+            if not isinstance(X, self._p.ndarray):
+                for x in X[0]:
+                    if isinstance(x, str):
+                        X = copy.deepcopy(X)
+                        X = self._preprocess_categorical_X(X)
+                        self._X = self._p.array(X)
+                        break
 
             self._X = self._p.array(X)
             self._X_dtypes = np.zeros(self._X.shape[1], dtype=np.int8)
@@ -91,10 +97,11 @@ class SupervisedModels(Models):
         super()._preprocess_X(X)
 
         try:
-            y = y.copy()
-            self._preprocess_categorical_y(y)
+            if isinstance(y[0], str):
+                self._preprocess_categorical_y(y)
             self._y = self._p.array(y)
-            if len(np.unique(y)) < self._y.shape[0] // 2:
+            y_unique_nums = len(np.unique(y))
+            if y_unique_nums < self._y.shape[0] // 2 and y_unique_nums < 30:
                 self._y_dtype = 0
             else:
                 self._y_dtype = 1
@@ -809,7 +816,7 @@ class DecisionTree(ClassificationModels):
             self.right = None
             self.attrib = None
             self.value = None
-            self.std = None
+            self.SST = None
             self.is_end = is_end
             self.outcome = outcome
 
@@ -825,7 +832,8 @@ class DecisionTree(ClassificationModels):
                     return y_mean
             return self.outcome
 
-    def __init__(self, pre_process=False, solver='ID3', gini_threshold=0.05, std_threshold=0.1, max_depth=5):
+    def __init__(self, pre_process=False, solver='CART', gini_threshold=None, SST_threshold=None, max_depth=None,
+                 max_leaf_nodes=None, search_order='bfs'):
         super().__init__(pre_process=pre_process)
 
         if solver == 'ID3':
@@ -837,12 +845,39 @@ class DecisionTree(ClassificationModels):
         elif solver == 'CART':
             self.solver = self._CART_solver
             self.predictor = self._CART_predictor
-            self.gini_threshold = gini_threshold
-            self.std_threshold = std_threshold
+
+            if gini_threshold is None:
+                self.gini_threshold = 0
+            else:
+                self.gini_threshold = gini_threshold
+
+            if SST_threshold is None:
+                self.SST_threshold = 0
+            else:
+                self.SST_threshold = SST_threshold
         else:
-            raise NotImplementedError("Decision tree solver doesn't support " + solver)
+            raise NotImplementedError(f"Decision tree solver doesn't support solver={solver}")
+
+        if search_order == 'bfs':
+            self.search_order = 0
+        elif search_order == 'dfs':
+            self.search_order = 1
+        else:
+            raise ValueError(f'Decision tree solver does not support search_order={search_order}')
+
         self.root = None
-        self.max_depth = max_depth
+
+        if max_depth is None:
+            self.max_depth = np.inf
+        else:
+            self.max_depth = max_depth
+
+        if max_leaf_nodes is None:
+            self.max_leaf_nodes = np.inf
+        else:
+            self.max_leaf_nodes = max_leaf_nodes
+
+        self.leaf_nodes = 1
 
     def fit(self, X, y):
         self._preprocess(X, y)
@@ -1011,8 +1046,11 @@ class DecisionTree(ClassificationModels):
         if self._y_dtype == 0:
             self._CART_recursive_discrete(self.root, 0)
         else:
-            self._goal_std = self.std_threshold * np.std(self._y)
-            self._CART_recursive_continuous(self.root, 0)
+            self._goal_SST = self.SST_threshold * np.var(self._y) * len(self._y)
+            if self.search_order == 0:
+                self._CART_bfs_continuous()
+            else:
+                self._CART_dfs_continuous(self.root, 0)
 
     def _CART_recursive_discrete(self, node, depth):
         if node.is_end:
@@ -1069,32 +1107,27 @@ class DecisionTree(ClassificationModels):
 
         node.clear()
         if not node.left.is_end:
-            self._CART_recursive_discrete(node.left, 0)
+            self._CART_recursive_discrete(node.left, depth + 1)
         if not node.right.is_end:
-            self._CART_recursive_discrete(node.right, 0)
+            self._CART_recursive_discrete(node.right, depth + 1)
 
-    def _CART_recursive_continuous(self, node, depth):
+    def _process_node(self, node, depth):
+        print(f'depth: {depth}, leaf_nodes: {self.leaf_nodes}')
         if node.is_end:
             return
 
-        node.std = np.std(node.y)
-        if node.std == 0:
+        node.SST = np.var(node.y) * len(node.y)
+        if node.SST == 0 or depth == self.max_depth or self.leaf_nodes >= self.max_leaf_nodes:
             node.is_end = True
             node.outcome = np.mean(node.y)
             node.clear()
             return
 
-        if depth == self.max_depth:
-            node.is_end = True
-            node.outcome = np.mean(node.y)
-            node.clear()
-            return
-
-        best_attrib, best_std, best_value = (
-            min(((attrib,) + min((self._conditional_std(node, attrib, value), value)
+        best_attrib, best_SST, best_value = (
+            min(((attrib,) + min((self._conditional_SST(node, attrib, value), value)
                                  for value in self._X_uniques[attrib])
                  if self._X_dtypes[attrib] == 0
-                 else (attrib,) + min(((self._conditional_std(node, attrib, value), value)
+                 else (attrib,) + min(((self._conditional_SST(node, attrib, value), value)
                                        if any(value < node.X[:, attrib]) and any(value > node.X[:, attrib])
                                        else (np.inf, 0)
                                        for value in self._X_sorts[attrib]),
@@ -1102,7 +1135,7 @@ class DecisionTree(ClassificationModels):
                  for attrib in range(self._X_shape[1])),
                 key=lambda x: x[1]))
 
-        if best_std >= node.std:
+        if best_SST >= node.SST:
             node.is_end = True
             node.outcome = np.mean(node.y)
             node.clear()
@@ -1117,7 +1150,7 @@ class DecisionTree(ClassificationModels):
             index_mask = node.X[:, best_attrib] < best_value
         not_index_mask = ~index_mask
 
-        if best_std < self._goal_std:
+        if best_SST < self._goal_SST:
             node.left = self.CARTTreeNode(is_end=True, outcome=np.mean(node.y[index_mask]))
             node.right = self.CARTTreeNode(is_end=True, outcome=np.mean(node.y[not_index_mask]))
             node.clear()
@@ -1132,12 +1165,24 @@ class DecisionTree(ClassificationModels):
             node.right = self.CARTTreeNode(X=node.X[not_index_mask], y=node.y[not_index_mask])
         else:
             node.right = self.CARTTreeNode(is_end=True, outcome=-1)
+        self.leaf_nodes += 1
 
         node.clear()
-        if not node.left.is_end:
-            self._CART_recursive_continuous(node.left, 0)
-        if not node.right.is_end:
-            self._CART_recursive_continuous(node.right, 0)
+
+    def _CART_bfs_continuous(self):
+        queue = deque([(self.root, 0)])
+        while queue:
+            node, depth = queue.popleft()
+            self._process_node(node, depth)
+            if not node.is_end:
+                queue.append((node.left, depth + 1))
+                queue.append((node.right, depth + 1))
+
+    def _CART_dfs_continuous(self, node, depth):
+        self._process_node(node, depth)
+        if not node.is_end:
+            self._CART_dfs_continuous(node.left, depth + 1)
+            self._CART_dfs_continuous(node.right, depth + 1)
 
     def _information_gain(self, node, attrib):
         return node.entropy - self._conditional_entropy_ID3(node.X, node.y, attrib)
@@ -1207,14 +1252,14 @@ class DecisionTree(ClassificationModels):
         y2 = node.y[~mask]
         return np.sum([len(y) / len(node.y) * self._gini(y) for y in (y1, y2) if len(y) > 0])
 
-    def _conditional_std(self, node, attrib, value):
+    def _conditional_SST(self, node, attrib, value):
         if self._X_dtypes[attrib] == 0:
             mask = node.X[:, attrib] == value
         else:
             mask = node.X[:, attrib] < value
         y1 = node.y[mask]
         y2 = node.y[~mask]
-        return np.sum([np.std(y) for y in (y1, y2) if len(y) > 0])
+        return np.sum([np.var(y) * len(y) for y in (y1, y2) if len(y) > 0])
 
     @staticmethod
     def _mode(y):
