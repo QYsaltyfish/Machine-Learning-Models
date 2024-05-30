@@ -1356,14 +1356,14 @@ class NeuralNetwork(SupervisedModels):
                 return 1
             return self.p
 
-    def __init__(self, lr=0.001, max_iter=1, weight_init='xavier', optimizer='adam', gpu=False):
+    def __init__(self, lr=0.001, epochs=1, weight_init='xavier', optimizer='adam', gpu=False):
         super().__init__(gpu=gpu)
 
         self.layers: list[list[NeuralNetwork.Node]] = [[], []]
         self.weights = None
         self.lr = lr
         self.df = self._p.vectorize(lambda x: x.df())
-        self.max_iter = max_iter
+        self.epochs = epochs
 
         if weight_init == 'xavier':
             self.weight_init = 1
@@ -1495,7 +1495,8 @@ class NeuralNetwork(SupervisedModels):
             self.m = [np.zeros_like(w) for w in self.weights]
             self.v = [np.zeros_like(w) for w in self.weights]
 
-        for _ in range(self.max_iter):
+        for epoch in range(self.epochs):
+            print(f'epoch: {epoch + 1}')
             for x, y_real in zip(self._X, self._y):
                 self._forward_propagate(x)
                 self._backward_propagate(y_real)
